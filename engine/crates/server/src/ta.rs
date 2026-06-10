@@ -158,6 +158,115 @@ fn td9(close: &[f64]) -> Vec<(usize, &'static str)> {
     out
 }
 
+/// 批次4：结构形态（双顶/双底、头肩顶/底）。基于收盘价摆动点，
+/// 信号标在颈线破位那根 bar——结构完成才确认，不重绘。
+fn structure_patterns(c: &[f64], k: usize) -> Vec<(usize, &'static str, String)> {
+    let n = c.len();
+    let (highs, lows) = pivots(c, k);
+    let mut out: Vec<(usize, &'static str, String)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push = |out: &mut Vec<(usize, &'static str, String)>, j: usize, side: &'static str, rule: &str| {
+        if seen.insert((j, rule.to_string())) {
+            out.push((j, side, rule.to_string()));
+        }
+    };
+
+    // 双顶：相邻两个摆动高点等高（±2%），中间有≥0.5%回撤；破颈线（中间最低点）确认
+    for w in highs.windows(2) {
+        let (p1, p2) = (w[0], w[1]);
+        if p2 - p1 < 5 || p2 - p1 > 60 {
+            continue;
+        }
+        let avg = (c[p1] + c[p2]) / 2.0;
+        if (c[p1] - c[p2]).abs() / avg > 0.02 {
+            continue;
+        }
+        let neck = c[p1..=p2].iter().cloned().fold(f64::MAX, f64::min);
+        if neck >= avg * 0.995 {
+            continue;
+        }
+        for j in p2 + k..(p2 + 40).min(n) {
+            if c[j] < neck {
+                push(&mut out, j, "sell", "双顶颈线破位");
+                break;
+            }
+            if c[j] > avg * 1.02 {
+                break; // 价格越过双顶，形态失效
+            }
+        }
+    }
+    // 双底（W底）：镜像
+    for w in lows.windows(2) {
+        let (p1, p2) = (w[0], w[1]);
+        if p2 - p1 < 5 || p2 - p1 > 60 {
+            continue;
+        }
+        let avg = (c[p1] + c[p2]) / 2.0;
+        if (c[p1] - c[p2]).abs() / avg > 0.02 {
+            continue;
+        }
+        let neck = c[p1..=p2].iter().cloned().fold(f64::MIN, f64::max);
+        if neck <= avg * 1.005 {
+            continue;
+        }
+        for j in p2 + k..(p2 + 40).min(n) {
+            if c[j] > neck {
+                push(&mut out, j, "buy", "双底颈线突破");
+                break;
+            }
+            if c[j] < avg * 0.98 {
+                break;
+            }
+        }
+    }
+    // 头肩顶：三个摆动高点，头比双肩高≥1.5%，双肩等高（±3%）；破两谷较低者确认
+    for w in highs.windows(3) {
+        let (s1, hd, s2) = (w[0], w[1], w[2]);
+        if s2 - s1 > 120 {
+            continue;
+        }
+        let sh_avg = (c[s1] + c[s2]) / 2.0;
+        if c[hd] < c[s1] * 1.015 || c[hd] < c[s2] * 1.015 || (c[s1] - c[s2]).abs() / sh_avg > 0.03 {
+            continue;
+        }
+        let neck = c[s1..=s2]
+            .iter()
+            .cloned()
+            .fold(f64::MAX, f64::min);
+        for j in s2 + k..(s2 + 40).min(n) {
+            if c[j] < neck {
+                push(&mut out, j, "sell", "头肩顶破位");
+                break;
+            }
+            if c[j] > c[hd] {
+                break;
+            }
+        }
+    }
+    // 头肩底：镜像
+    for w in lows.windows(3) {
+        let (s1, hd, s2) = (w[0], w[1], w[2]);
+        if s2 - s1 > 120 {
+            continue;
+        }
+        let sh_avg = (c[s1] + c[s2]) / 2.0;
+        if c[hd] > c[s1] * 0.985 || c[hd] > c[s2] * 0.985 || (c[s1] - c[s2]).abs() / sh_avg > 0.03 {
+            continue;
+        }
+        let neck = c[s1..=s2].iter().cloned().fold(f64::MIN, f64::max);
+        for j in s2 + k..(s2 + 40).min(n) {
+            if c[j] > neck {
+                push(&mut out, j, "buy", "头肩底突破");
+                break;
+            }
+            if c[j] < c[hd] {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// 批次3：K线形态族。反转形态要求趋势背景（昨收 vs MA20）才标注，教科书口径。
 /// 返回 (bar下标, side, 规则名)。
 fn candle_patterns(klines: &[Kline], ma20: &[f64]) -> Vec<(usize, &'static str, String)> {
@@ -286,6 +395,7 @@ pub fn build(
     let mut divs = divergences(&c, &dif, 4, 60, "MACD");
     divs.extend(divergences(&c, &rsi14, 4, 60, "RSI"));
     divs.extend(candle_patterns(klines, &ma20));
+    divs.extend(structure_patterns(&c, 4));
     for (i, side, rule) in divs {
         let map = if side == "buy" { &mut extra_buy } else { &mut extra_sell };
         map.entry(i).or_default().push(rule);
@@ -588,6 +698,23 @@ mod tests {
             .find(|s| s.side == "buy" && s.rules.iter().any(|x| x == "看涨吞没"));
         assert!(hit.is_some(), "expected bullish engulfing signal");
         assert_eq!(hit.unwrap().time, 30 * 86_400_000);
+    }
+
+    #[test]
+    fn double_top_neckline_break() {
+        // 110 双顶（间隔10根）+ 中间回撤到100，跌破100 时应给出双顶卖点
+        let mut c: Vec<f64> = (0..10).map(|i| 90.0 + 2.0 * i as f64).collect();
+        c.push(110.0); // 顶1 @10
+        c.extend([108.0, 106.0, 104.0, 102.0]);
+        c.push(100.0); // 颈线 @15
+        c.extend([102.0, 104.0, 106.0, 108.0]);
+        c.push(110.3); // 顶2 @20
+        c.extend([108.0, 105.0, 102.0, 99.0, 98.0]); // @24 跌破颈线
+        let hits = structure_patterns(&c, 4);
+        assert!(
+            hits.iter().any(|(j, side, r)| *j == 24 && *side == "sell" && r == "双顶颈线破位"),
+            "got {hits:?}"
+        );
     }
 
     #[test]
