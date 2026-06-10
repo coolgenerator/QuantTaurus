@@ -15,11 +15,13 @@ import HoldingsGuide from './components/HoldingsGuide'
 import StrategiesPanel from './components/StrategiesPanel'
 import UniversePlanPanel from './components/UniversePlanPanel'
 import FactorLabPanel from './components/FactorLabPanel'
+import TechPanel from './components/TechPanel'
 
-type View = 'stocks' | 'plans' | 'positions' | 'strategies' | 'factorlab' | 'options'
+type View = 'stocks' | 'tech' | 'plans' | 'positions' | 'strategies' | 'factorlab' | 'options'
 
 const VIEW_TABS: { key: View; label: string; sub: string }[] = [
   { key: 'stocks', label: '股票分析', sub: 'Stocks' },
+  { key: 'tech', label: '技术分析', sub: 'TA' },
   { key: 'plans', label: '交易计划', sub: 'Plans' },
   { key: 'positions', label: '持仓', sub: 'Positions' },
   { key: 'strategies', label: '策略', sub: 'Strategies' },
@@ -99,11 +101,14 @@ export default function App() {
   const [optionsMounted, setOptionsMounted] = useState(false)
   // 因子 Lab 同理懒挂载：进入后保持挂载，切走时挖掘轮询/报告状态不丢失。
   const [factorLabMounted, setFactorLabMounted] = useState(false)
+  // 技术分析页懒挂载：四张图实例较重，进入后保持挂载。
+  const [techMounted, setTechMounted] = useState(false)
 
   const changeView = useCallback((v: View) => {
     setView(v)
     if (v === 'options') setOptionsMounted(true)
     if (v === 'factorlab') setFactorLabMounted(true)
+    if (v === 'tech') setTechMounted(true)
   }, [])
 
   // 计划卡「信号策略」联动：跳转到策略 Tab。
@@ -204,6 +209,13 @@ export default function App() {
       {factorLabMounted && (
         <div className={view === 'factorlab' ? '' : 'hidden'}>
           <FactorLabPanel />
+        </div>
+      )}
+
+      {/* 技术分析全屏页：权威指标 + 趋势 + 双层买卖点，跟随全局 symbol/interval */}
+      {techMounted && (
+        <div className={view === 'tech' ? '' : 'hidden'}>
+          <TechPanel symbol={symbol} interval={interval} />
         </div>
       )}
 

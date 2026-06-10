@@ -166,6 +166,83 @@ pub fn volume_price_corr(klines: &[Kline], n: usize) -> Vec<f64> {
     out
 }
 
+/// 简单移动平均线。前 n-1 个元素为 NaN。
+pub fn sma(klines: &[Kline], n: usize) -> Vec<f64> {
+    let c = closes(klines);
+    let mut out = vec![f64::NAN; c.len()];
+    if n == 0 {
+        return out;
+    }
+    let mut sum = 0.0;
+    for i in 0..c.len() {
+        sum += c[i];
+        if i >= n {
+            sum -= c[i - n];
+        }
+        if i + 1 >= n {
+            out[i] = sum / n as f64;
+        }
+    }
+    out
+}
+
+/// KDJ(n, kp, dp) 中式经典口径：
+/// RSV = (C - LLV(low,n)) / (HHV(high,n) - LLV(low,n)) × 100
+/// K = (kp-1)/kp × K' + 1/kp × RSV；D 同理对 K 平滑；J = 3K - 2D。初值 K=D=50。
+/// 返回 (K, D, J)，前 n-1 个元素为 NaN。
+pub fn kdj(klines: &[Kline], n: usize, kp: usize, dp: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let len = klines.len();
+    let (mut ks, mut ds, mut js) = (
+        vec![f64::NAN; len],
+        vec![f64::NAN; len],
+        vec![f64::NAN; len],
+    );
+    let (mut k, mut d) = (50.0f64, 50.0f64);
+    for i in 0..len {
+        if i + 1 < n {
+            continue;
+        }
+        let w = &klines[i + 1 - n..=i];
+        let hh = w.iter().map(|x| x.high).fold(f64::MIN, f64::max);
+        let ll = w.iter().map(|x| x.low).fold(f64::MAX, f64::min);
+        let rsv = if hh > ll {
+            (klines[i].close - ll) / (hh - ll) * 100.0
+        } else {
+            50.0
+        };
+        k = ((kp as f64 - 1.0) * k + rsv) / kp as f64;
+        d = ((dp as f64 - 1.0) * d + k) / dp as f64;
+        ks[i] = k;
+        ds[i] = d;
+        js[i] = 3.0 * k - 2.0 * d;
+    }
+    (ks, ds, js)
+}
+
+/// MACD 完整三线（国际口径 HIST = DIF - DEA）。
+/// 返回 (DIF, DEA, HIST)，前 slow+sig 根为 NaN。
+pub fn macd_full(
+    klines: &[Kline],
+    fast: usize,
+    slow: usize,
+    sig: usize,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let c = closes(klines);
+    let ef = ema(&c, fast);
+    let es = ema(&c, slow);
+    let dif: Vec<f64> = ef.iter().zip(&es).map(|(a, b)| a - b).collect();
+    let dea = ema(&dif, sig);
+    let warmup = slow + sig;
+    let mask = |v: &[f64]| -> Vec<f64> {
+        v.iter()
+            .enumerate()
+            .map(|(i, &x)| if i < warmup { f64::NAN } else { x })
+            .collect()
+    };
+    let hist: Vec<f64> = dif.iter().zip(&dea).map(|(m, s)| m - s).collect();
+    (mask(&dif), mask(&dea), mask(&hist))
+}
+
 // ---------- 数学工具 ----------
 
 pub fn ema(xs: &[f64], n: usize) -> Vec<f64> {
@@ -282,6 +359,37 @@ mod tests {
         let f = flow_imbalance(&ks, 5);
         // taker_buy 60/100 → imbalance 0.2
         assert!((f[19] - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sma_known_values() {
+        let ks = fake_klines(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let m = sma(&ks, 3);
+        assert!(m[0].is_nan() && m[1].is_nan());
+        assert!((m[2] - 2.0).abs() < 1e-12);
+        assert!((m[4] - 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn kdj_bounds_and_warmup() {
+        // 单边上涨：K/D 应趋向高位（>70），且暖机期为 NaN
+        let closes: Vec<f64> = (0..40).map(|i| 100.0 + i as f64).collect();
+        let ks = fake_klines(&closes);
+        let (k, d, j) = kdj(&ks, 9, 3, 3);
+        assert!(k[7].is_nan() && d[7].is_nan() && j[7].is_nan());
+        assert!(k[39] > 70.0 && d[39] > 70.0);
+        assert!((j[39] - (3.0 * k[39] - 2.0 * d[39])).abs() < 1e-9);
+    }
+
+    #[test]
+    fn macd_full_sign_on_trend() {
+        // 持续上涨中 DIF>0 且 HIST 与 macd_hist 同口径（DIF-DEA）
+        let closes: Vec<f64> = (0..120).map(|i| 100.0 * (1.0 + 0.01 * i as f64)).collect();
+        let ks = fake_klines(&closes);
+        let (dif, dea, hist) = macd_full(&ks, 12, 26, 9);
+        assert!(dif[34].is_nan() && !dif[35].is_nan());
+        assert!(dif[119] > 0.0);
+        assert!((hist[119] - (dif[119] - dea[119])).abs() < 1e-9);
     }
 
     #[test]

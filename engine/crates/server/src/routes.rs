@@ -151,6 +151,27 @@ pub async fn factors(
     Ok(Json(serde_json::Value::Object(out)))
 }
 
+/// 技术分析全集：权威指标 + 趋势 + 经典/冠军双层买卖点（默认拉 730 天保证 MA200 有值）。
+pub async fn ta(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<KlineQuery>,
+) -> AppResult<impl IntoResponse> {
+    let (klines, interval) = load_klines(&state, &q).await?;
+    if klines.len() < 300 {
+        return Err(bad("not enough data"));
+    }
+    let key = crate::state::champ_key(&q.symbol.to_uppercase(), interval.as_binance());
+    let champion = {
+        let champs = state.champions.lock().unwrap();
+        champs
+            .get(&key)
+            .and_then(|c| c.spec.clone())
+            .map(|spec| (key.clone(), spec))
+    };
+    let resp = crate::ta::build(&klines, champion.as_ref().map(|(k, s)| (k.clone(), s)));
+    Ok(Json(resp))
+}
+
 #[derive(Deserialize)]
 pub struct BacktestReq {
     symbol: String,

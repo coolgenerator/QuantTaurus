@@ -153,6 +153,49 @@ export interface PaperStatus {
   sessions: Record<string, PaperSession>
 }
 
+// ---------- Technical analysis (/api/ta) ----------
+
+export interface TaSignal {
+  time: number // ms
+  side: 'buy' | 'sell'
+  rules: string[]
+  /** Number of rules hit on the same bar; >=2 = confluence (strong). */
+  strength: number
+  price: number
+}
+
+export interface TaResponse {
+  times: number[]
+  ma20: (number | null)[]
+  ma50: (number | null)[]
+  ma200: (number | null)[]
+  ema12: (number | null)[]
+  ema26: (number | null)[]
+  boll_up: (number | null)[]
+  boll_mid: (number | null)[]
+  boll_dn: (number | null)[]
+  macd_dif: (number | null)[]
+  macd_dea: (number | null)[]
+  macd_hist: (number | null)[]
+  rsi14: (number | null)[]
+  kdj_k: (number | null)[]
+  kdj_d: (number | null)[]
+  kdj_j: (number | null)[]
+  /** Per-bar trend: 1 bull / -1 bear / 0 range (or MA200 warming up). */
+  trend: number[]
+  /** Textbook-rule signals — NOT validated by the backtest gate; reference only. */
+  classic_signals: TaSignal[]
+  /** Gate-validated champion strategy entry/exit points. */
+  champion_signals: TaSignal[]
+  /** Champion slot key (e.g. "SPY|1d"); null when the symbol has no champion. */
+  champion: string | null
+}
+
+/** Defaults to 730 days so MA200 has enough warm-up bars. */
+export function fetchTa(symbol: string, interval: string, days = 730): Promise<TaResponse> {
+  return getJson(`/api/ta?symbol=${symbol}&interval=${interval}&days=${days}`)
+}
+
 // ---------- Trade plans ----------
 
 export interface TradePlan {
