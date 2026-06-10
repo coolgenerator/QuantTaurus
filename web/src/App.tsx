@@ -13,13 +13,15 @@ import TradeFeed from './components/TradeFeed'
 import OptionsPanel from './components/OptionsPanel'
 import { OptionPlansSection, OptionsPaperSection } from './components/OptionPlansPanel'
 import HoldingsGuide from './components/HoldingsGuide'
+import StrategiesPanel from './components/StrategiesPanel'
 
-type View = 'stocks' | 'plans' | 'positions' | 'options'
+type View = 'stocks' | 'plans' | 'positions' | 'strategies' | 'options'
 
 const VIEW_TABS: { key: View; label: string; sub: string }[] = [
   { key: 'stocks', label: '股票分析', sub: 'Stocks' },
   { key: 'plans', label: '交易计划', sub: 'Plans' },
   { key: 'positions', label: '持仓', sub: 'Positions' },
+  { key: 'strategies', label: '策略', sub: 'Strategies' },
   { key: 'options', label: '期权分析', sub: 'Options' },
 ]
 
@@ -93,6 +95,9 @@ export default function App() {
     if (v === 'options') setOptionsMounted(true)
   }, [])
 
+  // 计划卡「信号策略」联动：跳转到策略 Tab。
+  const gotoStrategies = useCallback(() => changeView('strategies'), [changeView])
+
   // 全局选定标的：顶栏 SymbolPicker / 板块面板点选共用；股票数据源不支持 4h，需回退 1d。
   const handleSelectSymbol = useCallback(
     (s: string) => {
@@ -145,7 +150,7 @@ export default function App() {
           {/* 组合层视角：当日仓位规划 + 组合风控，置于单策略计划之上。 */}
           <PortfolioPanel />
           {/* 今日交易计划：方向/仓位/反转价/倒计时，用户最关心的面板。 */}
-          <TradePlanPanel />
+          <TradePlanPanel onNavigateStrategies={gotoStrategies} />
           {/* All champion slots across symbol/interval pairs. */}
           <ChampionRegistry />
         </section>
@@ -153,7 +158,7 @@ export default function App() {
         {/* 大区二：期权交易计划（计划卡；模拟盘见「持仓」页） */}
         <section className="flex flex-col gap-4">
           <PlanSectionHeader tone="purple" title="🎯 期权交易计划" sub="Option Trade Plans" />
-          <OptionPlansSection />
+          <OptionPlansSection onNavigateStrategies={gotoStrategies} />
         </section>
       </div>
 
@@ -165,6 +170,11 @@ export default function App() {
         <PaperPanel />
         {/* 期权模拟盘（从交易计划页迁入）。 */}
         <OptionsPaperSection />
+      </div>
+
+      {/* 策略页：冠军策略档案 + 回测验证，隐藏而非卸载 */}
+      <div className={view === 'strategies' ? '' : 'hidden'}>
+        <StrategiesPanel />
       </div>
 
       {/* 期权分析全屏页：跟随全局 symbol */}

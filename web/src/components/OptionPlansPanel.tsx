@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  fetchChampions,
   fetchOptionPlans,
   fetchOptionsPaper,
   fmtNum,
@@ -60,7 +61,21 @@ function circledNum(i: number): string {
   return i < 20 ? String.fromCharCode(0x2460 + i) : `${i + 1}.`
 }
 
-function OptionPlanCard({ plan }: { plan: OptionPlan }) {
+/** Source champion info for an option plan's underlying signal. */
+interface SignalChampion {
+  kind: string
+  key: string
+}
+
+function OptionPlanCard({
+  plan,
+  champion,
+  onNavigateStrategies,
+}: {
+  plan: OptionPlan
+  champion?: SignalChampion
+  onNavigateStrategies?: () => void
+}) {
   const [showRationale, setShowRationale] = useState(false)
   const contractCost = plan.premium * 100
   const isPut = plan.action === 'BUY PUT'
@@ -129,6 +144,18 @@ function OptionPlanCard({ plan }: { plan: OptionPlan }) {
         <span className="ml-auto text-slate-500">spot {fmtNum(plan.spot)}</span>
       </div>
 
+      {/* 信号策略联动：跳转到「策略」Tab 查看冠军档案 */}
+      {champion && (
+        <button
+          onClick={onNavigateStrategies}
+          className="mt-2 block w-full text-left font-mono text-[11px] text-slate-500 transition hover:text-neon-cyan"
+          title="点击查看策略档案"
+        >
+          信号策略: <span className="font-bold text-neon-purple">{champion.kind}</span>
+          <span className="text-slate-600">（{champion.key} 冠军）</span> ↗
+        </button>
+      )}
+
       {/* 买入 / 卖出规则 */}
       <div className="mt-3 rounded-lg border border-white/5 bg-white/[0.03] p-2.5">
         <p className="text-[11px] leading-relaxed text-slate-300">
@@ -170,10 +197,16 @@ function OptionPlanCard({ plan }: { plan: OptionPlan }) {
   )
 }
 
-export function OptionPlansSection() {
+export function OptionPlansSection({
+  onNavigateStrategies,
+}: {
+  onNavigateStrategies?: () => void
+}) {
   const [data, setData] = useState<OptionPlansResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // 标的 → 注册表冠军（kind + slot key），用于计划卡的「信号策略」联动行。
+  const [champions, setChampions] = useState<Record<string, SignalChampion>>({})
 
   const load = useCallback(async () => {
     try {
@@ -192,6 +225,24 @@ export function OptionPlansSection() {
     const id = window.setInterval(() => void load(), 60_000)
     return () => window.clearInterval(id)
   }, [load])
+
+  // 拉一次冠军注册表；同一标的多周期时优先 1d（期权计划由日线信号推导）。
+  useEffect(() => {
+    fetchChampions()
+      .then((map) => {
+        const bySymbol: Record<string, SignalChampion> = {}
+        for (const [key, rec] of Object.entries(map)) {
+          if (!rec.spec) continue
+          if (!(rec.symbol in bySymbol) || rec.interval === '1d') {
+            bySymbol[rec.symbol] = { kind: rec.spec.kind, key }
+          }
+        }
+        setChampions(bySymbol)
+      })
+      .catch(() => {
+        /* 注册表不可用时仅隐藏联动行 */
+      })
+  }, [])
 
   const plans = data?.plans ?? []
 
@@ -233,7 +284,12 @@ export function OptionPlansSection() {
       {plans.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {plans.map((p) => (
-            <OptionPlanCard key={p.code || `${p.underlying}-${p.action}`} plan={p} />
+            <OptionPlanCard
+              key={p.code || `${p.underlying}-${p.action}`}
+              plan={p}
+              champion={champions[p.underlying]}
+              onNavigateStrategies={onNavigateStrategies}
+            />
           ))}
         </div>
       )}
@@ -447,6 +503,10 @@ export function OptionsPaperSection() {
 // ---------- combined panel ----------
 
 /** 期权交易计划区：仅计划卡（期权模拟盘已移至「持仓」页）。 */
-export default function OptionPlansPanel() {
-  return <OptionPlansSection />
+export default function OptionPlansPanel({
+  onNavigateStrategies,
+}: {
+  onNavigateStrategies?: () => void
+}) {
+  return <OptionPlansSection onNavigateStrategies={onNavigateStrategies} />
 }

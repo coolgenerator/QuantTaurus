@@ -50,6 +50,10 @@ export interface BacktestMetrics {
   win_rate: number
   num_trades: number
   deflated_sharpe_prob: number
+  /** Bar-level directional hit rate, 0-1 (fraction of holding bars that made money). */
+  hit_rate: number
+  /** Gross profit / gross loss; >1 = profitable edge. */
+  profit_factor: number
 }
 
 export interface EquityPoint {

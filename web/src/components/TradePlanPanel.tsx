@@ -95,7 +95,15 @@ function TargetZone({ plan }: { plan: TradePlan }) {
   )
 }
 
-function PlanCard({ plan, nowMs }: { plan: TradePlan; nowMs: number }) {
+function PlanCard({
+  plan,
+  nowMs,
+  onNavigateStrategies,
+}: {
+  plan: TradePlan
+  nowMs: number
+  onNavigateStrategies?: () => void
+}) {
   const dir = directionOf(plan)
   const badge = DIR_BADGE[dir]
   const conviction = Math.min(Math.abs(plan.target_position), 1)
@@ -119,9 +127,14 @@ function PlanCard({ plan, nowMs }: { plan: TradePlan; nowMs: number }) {
         <span className="font-mono text-xl font-extrabold tracking-wide text-slate-100">
           {plan.symbol}
         </span>
-        <span className="badge border border-white/10 bg-white/5 font-mono font-medium text-slate-400">
+        {/* 策略徽章：点击跳转到「策略」Tab 查看该冠军的档案 */}
+        <button
+          onClick={onNavigateStrategies}
+          className="badge border border-white/10 bg-white/5 font-mono font-medium text-slate-400 transition hover:border-neon-cyan/50 hover:text-neon-cyan"
+          title={`信号策略: ${plan.strategy}（${plan.key} 冠军）· 点击查看策略档案`}
+        >
           {plan.interval} · {plan.strategy}
-        </span>
+        </button>
         {/* 判断周期徽章：hover 显示完整决策节奏说明 */}
         <span
           className="badge cursor-default border border-neon-purple/40 bg-neon-purple/10 font-mono font-medium text-neon-purple"
@@ -189,11 +202,24 @@ function PlanCard({ plan, nowMs }: { plan: TradePlan; nowMs: number }) {
         </span>
       </div>
 
+      {/* 信号策略联动：跳转到「策略」Tab */}
+      <button
+        onClick={onNavigateStrategies}
+        className="mt-2 block w-full text-left font-mono text-[11px] text-slate-500 transition hover:text-neon-cyan"
+        title="点击查看策略档案"
+      >
+        信号策略: <span className="font-bold text-neon-purple">{plan.strategy}</span>
+        <span className="text-slate-600">（{plan.key} 冠军）</span> ↗
+      </button>
     </div>
   )
 }
 
-export default function TradePlanPanel() {
+export default function TradePlanPanel({
+  onNavigateStrategies,
+}: {
+  onNavigateStrategies?: () => void
+}) {
   const [plans, setPlans] = useState<TradePlan[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -261,7 +287,12 @@ export default function TradePlanPanel() {
       {plans.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {plans.map((p) => (
-            <PlanCard key={p.key} plan={p} nowMs={nowMs} />
+            <PlanCard
+              key={p.key}
+              plan={p}
+              nowMs={nowMs}
+              onNavigateStrategies={onNavigateStrategies}
+            />
           ))}
         </div>
       )}
