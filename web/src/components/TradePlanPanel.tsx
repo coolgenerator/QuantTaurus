@@ -56,11 +56,54 @@ function FlipLine({ plan, dir }: { plan: TradePlan; dir: Direction }) {
   )
 }
 
+/** Confidence color tiers: >=70 green / >=50 amber / <50 red. */
+function confidenceTone(confidence: number): { text: string; bar: string } {
+  if (confidence >= 70)
+    return { text: 'text-neon-green', bar: 'bg-gradient-to-r from-emerald-500 to-neon-green' }
+  if (confidence >= 50)
+    return { text: 'text-amber-400', bar: 'bg-gradient-to-r from-amber-500 to-amber-300' }
+  return { text: 'text-neon-red', bar: 'bg-gradient-to-r from-rose-600 to-neon-red' }
+}
+
+/** ±1σ·√N target zone bar with a marker at the current price. */
+function TargetZone({ plan }: { plan: TradePlan }) {
+  if (plan.target_zone_low === null || plan.target_zone_high === null) return null
+  const lo = plan.target_zone_low
+  const hi = plan.target_zone_high
+  const span = hi - lo
+  // Marker position of last_close within [lo, hi], clamped to the bar.
+  const pos = span > 0 ? Math.min(Math.max((plan.last_close - lo) / span, 0), 1) : 0.5
+  return (
+    <div className="mt-3">
+      <div className="flex items-center justify-between font-mono text-[11px]">
+        <span className="text-neon-red">{fmtNum(lo)}</span>
+        <span className="text-slate-500">统计目标区间</span>
+        <span className="text-neon-green">{fmtNum(hi)}</span>
+      </div>
+      <div className="relative mt-1 h-2 rounded-full bg-gradient-to-r from-rose-500/40 via-white/10 to-emerald-500/40">
+        {/* 现价标记点 */}
+        <span
+          className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-ink bg-neon-cyan shadow-[0_0_8px_rgba(34,211,238,0.9)]"
+          style={{ left: `${(pos * 100).toFixed(1)}%` }}
+          title={`现价 ${fmtNum(plan.last_close)}`}
+        />
+      </div>
+      <p className="mt-1 text-right font-mono text-[10px] text-slate-500">
+        ±1σ·√{Math.round(plan.horizon_days)}日 区间（每日收盘更新）
+      </p>
+    </div>
+  )
+}
+
 function PlanCard({ plan, nowMs }: { plan: TradePlan; nowMs: number }) {
   const dir = directionOf(plan)
   const badge = DIR_BADGE[dir]
   const conviction = Math.min(Math.abs(plan.target_position), 1)
   const sharpe = plan.holdout_sharpe
+  const confidence = Math.min(Math.max(plan.confidence ?? 0, 0), 100)
+  const confTone = confidenceTone(confidence)
+  // 决策周期徽章只显示前半段（如「日线」），完整文案放 tooltip。
+  const cadenceShort = (plan.decision_interval_label ?? '').split('·')[0]?.trim() || plan.interval
 
   const barCls =
     dir === 'short'
@@ -79,6 +122,13 @@ function PlanCard({ plan, nowMs }: { plan: TradePlan; nowMs: number }) {
         <span className="badge border border-white/10 bg-white/5 font-mono font-medium text-slate-400">
           {plan.interval} · {plan.strategy}
         </span>
+        {/* 判断周期徽章：hover 显示完整决策节奏说明 */}
+        <span
+          className="badge cursor-default border border-neon-purple/40 bg-neon-purple/10 font-mono font-medium text-neon-purple"
+          title={plan.decision_interval_label}
+        >
+          {cadenceShort}
+        </span>
         <span className={`badge ml-auto px-3 py-1 text-sm ${badge.cls}`}>{badge.label}</span>
       </div>
 
@@ -94,6 +144,33 @@ function PlanCard({ plan, nowMs }: { plan: TradePlan; nowMs: number }) {
           {Math.round(conviction * 100)}% 仓位
         </span>
       </div>
+
+      {/* 置信度：横条 + 数字 + 留出窗 sharpe 依据 */}
+      <div className="mt-2 flex items-center gap-2">
+        <span className="shrink-0 text-[11px] text-slate-500">置信度</span>
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${confTone.bar}`}
+            style={{ width: `${Math.round(confidence)}%` }}
+          />
+        </div>
+        <span className={`shrink-0 font-mono text-xs font-bold ${confTone.text}`}>
+          {Math.round(confidence)} {plan.confidence_label}
+        </span>
+      </div>
+      <p className="mt-1 font-mono text-[10px] text-slate-500">
+        依据: 留出窗 Sharpe {sharpe === null ? '—' : sharpe.toFixed(2)}
+      </p>
+
+      {/* 决策依据：霓虹青竖线 + 等宽小字 */}
+      {plan.rationale && (
+        <div className="mt-3 border-l-2 border-neon-cyan/70 bg-neon-cyan/5 py-1.5 pl-2.5 pr-2">
+          <p className="font-mono text-[11px] leading-relaxed text-slate-300">{plan.rationale}</p>
+        </div>
+      )}
+
+      {/* 统计目标区间：±1σ·√N日 */}
+      <TargetZone plan={plan} />
 
       {/* 关键价位 */}
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs">
@@ -112,17 +189,6 @@ function PlanCard({ plan, nowMs }: { plan: TradePlan; nowMs: number }) {
         </span>
       </div>
 
-      {/* 历史可信度 */}
-      <p className="mt-2 border-t border-white/5 pt-2 font-mono text-[11px] text-slate-500">
-        历史可信度 holdout sharpe{' '}
-        <span
-          className={`font-bold ${
-            sharpe === null ? 'text-slate-500' : sharpe >= 0 ? 'text-neon-green' : 'text-neon-red'
-          }`}
-        >
-          {sharpe === null ? '—' : fmtNum(sharpe)}
-        </span>
-      </p>
     </div>
   )
 }

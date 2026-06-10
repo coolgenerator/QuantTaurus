@@ -6,6 +6,7 @@ import BacktestPanel from './components/BacktestPanel'
 import EvolvePanel from './components/EvolvePanel'
 import ChampionRegistry from './components/ChampionRegistry'
 import TradePlanPanel from './components/TradePlanPanel'
+import PortfolioPanel from './components/PortfolioPanel'
 import SectorPanel from './components/SectorPanel'
 import PaperPanel from './components/PaperPanel'
 import TradeFeed from './components/TradeFeed'
@@ -116,6 +117,8 @@ export default function App() {
 
       {/* 交易计划页：全宽堆叠，同样隐藏而非卸载 */}
       <div className={`flex flex-col gap-4 ${view === 'plans' ? '' : 'hidden'}`}>
+        {/* 组合层视角：当日仓位规划 + 组合风控，置于单策略计划之上。 */}
+        <PortfolioPanel />
         {/* 今日交易计划：方向/仓位/反转价/倒计时，用户最关心的面板。 */}
         <TradePlanPanel />
         {/* All champion slots across symbol/interval pairs. */}

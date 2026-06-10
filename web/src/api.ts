@@ -159,10 +159,64 @@ export interface TradePlan {
   /** Timestamp (ms) of the next signal recomputation. */
   next_decision_ms: number
   holdout_sharpe: number | null
+  /** Full decision-cadence text, e.g. "日线 · 每日收盘决策一次，盘中不动作". */
+  decision_interval_label: string
+  /** Signal confidence in [0, 100]. */
+  confidence: number
+  confidence_label: '高' | '中' | '低'
+  /** Human-readable decision rationale. */
+  rationale: string
+  /** Statistical target zone (±1σ·√N days); null when unavailable. */
+  target_zone_low: number | null
+  target_zone_high: number | null
+  /** Horizon used for the target zone, in days. */
+  horizon_days: number
+  /** Daily volatility (fraction, e.g. 0.0252 = 2.52%). */
+  vol_daily: number
 }
 
 export function fetchTradePlans(): Promise<TradePlan[]> {
   return getJson('/api/plan')
+}
+
+// ---------- Portfolio (combined daily position planning) ----------
+
+export interface PortfolioSlot {
+  /** Slot key, e.g. "NVDA|1d". */
+  key: string
+  symbol: string
+  /** Raw signal position within the slot's own 1/N capital sleeve, [-1, 1]. */
+  raw_position: number
+  /** Raw portfolio weight (raw_position / N). */
+  raw_weight: number
+  /** Final planned portfolio weight after risk scaling. */
+  adjusted_weight: number
+  /** Daily volatility of the slot's asset (fraction). */
+  vol_daily: number
+}
+
+export interface PortfolioReport {
+  slots: PortfolioSlot[]
+  /** Gross leverage before/after risk scaling (sum of |weights|). */
+  gross_raw: number
+  gross_adjusted: number
+  /** Net exposure after risk scaling (signed sum of weights). */
+  net_adjusted: number
+  /** Risk scaling factor applied to raw weights; 1 = no scaling triggered. */
+  scale: number
+  /** Estimated annualized portfolio vol before/after scaling (fraction). */
+  est_vol_annual_raw: number
+  est_vol_annual_adjusted: number
+  /** Risk limits. */
+  gross_cap: number
+  vol_target_annual: number
+  /** Pairwise correlation assumed when aggregating slot vols. */
+  assumed_correlation: number
+  note: string
+}
+
+export function fetchPortfolio(): Promise<PortfolioReport> {
+  return getJson('/api/portfolio')
 }
 
 // ---------- Symbol search ----------
