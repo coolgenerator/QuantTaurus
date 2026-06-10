@@ -9,8 +9,9 @@
 //!   GET  /api/champion
 //!   GET  /ws                实时行情 + 进化进度推送
 
-mod state;
+mod paper;
 mod routes;
+mod state;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -41,6 +42,9 @@ async fn main() -> anyhow::Result<()> {
     // 用最新数据重跑 walk-forward 进化，冠军仅在留出集胜出时热更新
     spawn_auto_retrain(state.clone());
 
+    // 实时模拟盘：冠军策略接实时行情，mark-to-market + 周期调仓
+    paper::start_paper_engine(state.clone());
+
     let app = Router::new()
         .route("/api/health", get(routes::health))
         .route("/api/klines", get(routes::klines))
@@ -49,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/evolve", post(routes::evolve_start))
         .route("/api/evolve/status", get(routes::evolve_status))
         .route("/api/champion", get(routes::champion))
+        .route("/api/paper", get(routes::paper))
         .route("/ws", get(routes::ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);

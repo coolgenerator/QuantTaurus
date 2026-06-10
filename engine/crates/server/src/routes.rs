@@ -186,6 +186,14 @@ pub async fn champion(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(champ)
 }
 
+pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let sess = state.paper.lock().unwrap().clone();
+    match sess {
+        Some(s) => Json(json!({"active": true, "session": s})),
+        None => Json(json!({"active": false})),
+    }
+}
+
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,

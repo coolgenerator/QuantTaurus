@@ -24,6 +24,15 @@ pub enum WsMessage {
         promoted: bool,
         champion_name: String,
     },
+    /// 模拟盘净值标记
+    Paper {
+        time: i64,
+        equity: f64,
+        position: f64,
+        price: f64,
+    },
+    /// 模拟盘调仓事件
+    PaperTrade(crate::paper::PaperTrade),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -58,6 +67,7 @@ pub struct AppState {
     pub evolve_status: Mutex<EvolveStatus>,
     pub champion: Mutex<ChampionRecord>,
     pub champion_path: PathBuf,
+    pub paper: Mutex<Option<crate::paper::PaperSession>>,
 }
 
 impl AppState {
@@ -76,6 +86,7 @@ impl AppState {
             evolve_status: Mutex::new(EvolveStatus::Idle),
             champion: Mutex::new(champion),
             champion_path,
+            paper: Mutex::new(None),
         })
     }
 
