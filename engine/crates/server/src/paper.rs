@@ -26,7 +26,8 @@ fn cost_per_unit_turnover(symbol: &str) -> f64 {
     if qdata::is_crypto(symbol) {
         0.001 + 0.0005
     } else {
-        0.0001 + 0.0002
+        let c = crate::routes::market_params(symbol, qcore::Interval::D1).1;
+        c.fee_rate + c.slippage
     }
 }
 

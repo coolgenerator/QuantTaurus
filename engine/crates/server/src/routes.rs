@@ -27,6 +27,13 @@ pub async fn health() -> impl IntoResponse {
     Json(json!({"ok": true, "ts": now_ms()}))
 }
 
+fn env_f64(key: &str, default: f64) -> f64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 /// 按资产类别返回（每年bar数, 成本模型）。
 /// 加密 24/7：365.25 天年化，taker 费率；股票/ETF：252 交易日年化，低佣金+滑点。
 pub fn market_params(symbol: &str, interval: Interval) -> (f64, CostModel) {
@@ -47,11 +54,14 @@ pub fn market_params(symbol: &str, interval: Interval) -> (f64, CostModel) {
             Interval::M5 => 78.0,
             Interval::M1 => 390.0,
         };
+        // 股票默认按 moomoo 美股口径：零佣金零平台费，仅卖出侧监管费
+        // (SEC ~0.0000278 + FINRA TAF) ≈ 单边均摊 0.2bp；滑点 3bp 保守
+        // 可用 QHH_STOCK_FEE / QHH_STOCK_SLIPPAGE 覆盖
         (
             252.0 * bars_per_trading_day,
             CostModel {
-                fee_rate: 0.0001,
-                slippage: 0.0002,
+                fee_rate: env_f64("QHH_STOCK_FEE", 0.00002),
+                slippage: env_f64("QHH_STOCK_SLIPPAGE", 0.0003),
             },
         )
     }
