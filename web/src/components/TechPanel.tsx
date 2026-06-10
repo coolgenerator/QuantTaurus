@@ -56,20 +56,21 @@ function lastVal(vals: (number | null)[]): number | null {
   return null
 }
 
-/** 双层信号 → lightweight-charts markers（按时间升序，库要求）。 */
-function buildMarkers(ta: TaResponse, showClassic: boolean, showChampion: boolean) {
+type ClassicMode = 'lite' | 'all' | 'off'
+
+/** 双层信号 → markers。文字一律不上图（细节走 hover），精简模式只画共振强信号。 */
+function buildMarkers(ta: TaResponse, classicMode: ClassicMode, showChampion: boolean) {
   const ms: SeriesMarker<Time>[] = []
-  if (showClassic) {
+  if (classicMode !== 'off') {
     for (const s of ta.classic_signals) {
       const strong = s.strength >= 2
+      if (classicMode === 'lite' && !strong) continue
       ms.push({
         time: toUnixSec(s.time) as UTCTimestamp,
         position: s.side === 'buy' ? 'belowBar' : 'aboveBar',
         shape: s.side === 'buy' ? 'arrowUp' : 'arrowDown',
         color: s.side === 'buy' ? UP : DOWN,
         size: strong ? 2 : 1,
-        // 共振强信号才标文字，避免满屏噪音
-        text: strong ? s.rules.join('+') : undefined,
       })
     }
   }
@@ -81,12 +82,33 @@ function buildMarkers(ta: TaResponse, showClassic: boolean, showChampion: boolea
         shape: 'circle',
         color: s.side === 'buy' ? '#22d3ee' : '#c084fc',
         size: 1,
-        text: s.rules[0],
       })
     }
   }
   ms.sort((a, b) => (a.time as number) - (b.time as number))
   return ms
+}
+
+interface BarSignal {
+  side: 'buy' | 'sell'
+  rules: string[]
+  price: number
+  layer: 'classic' | 'champion'
+}
+
+/** unix秒 → 该 bar 全部信号（含被精简模式隐藏的），hover 提示用。 */
+function buildSigMap(ta: TaResponse) {
+  const m = new Map<number, BarSignal[]>()
+  const add = (t: number, sig: BarSignal) => {
+    const arr = m.get(t)
+    if (arr) arr.push(sig)
+    else m.set(t, [sig])
+  }
+  for (const s of ta.classic_signals)
+    add(toUnixSec(s.time), { side: s.side, rules: s.rules, price: s.price, layer: 'classic' })
+  for (const s of ta.champion_signals)
+    add(toUnixSec(s.time), { side: s.side, rules: s.rules, price: s.price, layer: 'champion' })
+  return m
 }
 
 const TREND_LABEL: Record<number, { text: string; cls: string }> = {
@@ -108,14 +130,17 @@ export default function TechPanel({ symbol, interval }: Props) {
   const macdRef = useRef<HTMLDivElement>(null)
   const rsiRef = useRef<HTMLDivElement>(null)
   const kdjRef = useRef<HTMLDivElement>(null)
+  const tipRef = useRef<HTMLDivElement>(null)
 
   const chartsRef = useRef<IChartApi[]>([])
   const seriesRef = useRef<Record<string, ISeriesApi<'Line' | 'Candlestick' | 'Histogram'>>>({})
   const taRef = useRef<TaResponse | null>(null)
+  const sigMapRef = useRef<Map<number, BarSignal[]>>(new Map())
 
   const [ta, setTa] = useState<TaResponse | null>(null)
-  const [showClassic, setShowClassic] = useState(true)
+  const [classicMode, setClassicMode] = useState<ClassicMode>('lite')
   const [showChampion, setShowChampion] = useState(true)
+  const [showEma, setShowEma] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -150,6 +175,8 @@ export default function TechPanel({ symbol, interval }: Props) {
     S.ma200 = line('#c084fc', 2)
     S.ema12 = line('rgba(251,191,36,0.5)', 1, LineStyle.Dotted)
     S.ema26 = line('rgba(34,211,238,0.5)', 1, LineStyle.Dotted)
+    S.ema12.applyOptions({ visible: false })
+    S.ema26.applyOptions({ visible: false })
     S.bollUp = line('rgba(148,163,184,0.45)', 1, LineStyle.Dashed)
     S.bollMid = line('rgba(148,163,184,0.3)', 1)
     S.bollDn = line('rgba(148,163,184,0.45)', 1, LineStyle.Dashed)
@@ -171,6 +198,34 @@ export default function TechPanel({ symbol, interval }: Props) {
     S.kdjK = kdj.addLineSeries({ color: '#fbbf24', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     S.kdjD = kdj.addLineSeries({ color: '#22d3ee', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     S.kdjJ = kdj.addLineSeries({ color: '#c084fc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+
+    // hover 提示：crosshair 落在有信号的 bar 上时，浮层显示当天全部信号明细
+    main.subscribeCrosshairMove((param) => {
+      const tip = tipRef.current
+      const wrap = mainRef.current
+      if (!tip || !wrap) return
+      const sigs = param.time != null ? sigMapRef.current.get(param.time as number) : undefined
+      if (!sigs?.length || !param.point) {
+        tip.style.display = 'none'
+        return
+      }
+      const date = new Date((param.time as number) * 1000).toISOString().slice(0, 10)
+      tip.innerHTML =
+        `<div style="color:#64748b;font-family:monospace;margin-bottom:4px">${date}</div>` +
+        sigs
+          .map((s) => {
+            const color = s.side === 'buy' ? UP : DOWN
+            const icon = s.layer === 'champion' ? '◉' : s.side === 'buy' ? '▲' : '▼'
+            const tag = s.layer === 'champion' ? '冠军' : s.side === 'buy' ? '买' : '卖'
+            return `<div style="color:${color};line-height:1.5">${icon} ${tag} · ${s.rules.join(' + ')} <span style="color:#64748b">@${s.price.toFixed(2)}</span></div>`
+          })
+          .join('')
+      tip.style.display = 'block'
+      const x = Math.max(4, Math.min(param.point.x + 14, wrap.clientWidth - tip.offsetWidth - 8))
+      const y = Math.max(4, param.point.y - tip.offsetHeight - 12)
+      tip.style.left = `${x}px`
+      tip.style.top = `${y}px`
+    })
 
     // 时间轴四图联动（guard 防递归）
     let syncing = false
@@ -250,6 +305,7 @@ export default function TechPanel({ symbol, interval }: Props) {
         S.kdjJ.setData(lineData(t, taResp.kdj_j))
         chartsRef.current[0]?.timeScale().fitContent()
         taRef.current = taResp
+        sigMapRef.current = buildSigMap(taResp)
         setTa(taResp)
         setLoading(false)
       })
@@ -267,8 +323,14 @@ export default function TechPanel({ symbol, interval }: Props) {
   useEffect(() => {
     const candle = seriesRef.current.candle as ISeriesApi<'Candlestick'> | undefined
     if (!candle || !ta) return
-    candle.setMarkers(buildMarkers(ta, showClassic, showChampion))
-  }, [ta, showClassic, showChampion])
+    candle.setMarkers(buildMarkers(ta, classicMode, showChampion))
+  }, [ta, classicMode, showChampion])
+
+  // EMA 虚线显隐
+  useEffect(() => {
+    seriesRef.current.ema12?.applyOptions({ visible: showEma })
+    seriesRef.current.ema26?.applyOptions({ visible: showEma })
+  }, [showEma])
 
   const trendNow = ta ? TREND_LABEL[ta.trend[ta.trend.length - 1] ?? 0] : null
   const rsiNow = ta ? lastVal(ta.rsi14) : null
@@ -302,15 +364,36 @@ export default function TechPanel({ symbol, interval }: Props) {
               />
             </>
           )}
+          <div className="flex overflow-hidden rounded-full border border-white/10 text-xs font-bold">
+            {(
+              [
+                ['lite', `精简 ${ta ? ta.classic_signals.filter((s) => s.strength >= 2).length : ''}`],
+                ['all', `全部 ${ta ? ta.classic_signals.length : ''}`],
+                ['off', '关'],
+              ] as [ClassicMode, string][]
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                onClick={() => setClassicMode(mode)}
+                className={`px-3 py-1 transition ${
+                  classicMode === mode
+                    ? 'bg-emerald-400/15 text-emerald-300'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button
-            onClick={() => setShowClassic((v) => !v)}
+            onClick={() => setShowEma((v) => !v)}
             className={`rounded-full border px-3 py-1 text-xs font-bold transition ${
-              showClassic
-                ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300'
+              showEma
+                ? 'border-amber-400/50 bg-amber-400/10 text-amber-300'
                 : 'border-white/10 text-slate-500 hover:text-slate-300'
             }`}
           >
-            ▲▼ 经典信号 {ta ? ta.classic_signals.length : ''}
+            EMA
           </button>
           <button
             onClick={() => setShowChampion((v) => !v)}
@@ -328,17 +411,19 @@ export default function TechPanel({ symbol, interval }: Props) {
       </div>
 
       <p className="text-[11px] leading-snug text-slate-500">
-        经典信号为教科书口径，含约24条规则：指标类（MACD/RSI/布林/KDJ/均线金叉死叉/多空排列）、
-        计数类（神奇九转TD9）、背离类（MACD·RSI顶底背离，第二摆动点确认后第4根bar标注）、
-        突破类（唐奇安20日·放量，同向10根内只标首次）、K线形态类（吞没/锤子上吊/流星/启明黄昏星/
-        红三兵乌鸦/趋势末端十字星，均带MA20趋势背景过滤）、结构类（双顶双底/头肩，
-        颈线破位才标注）、趋势跟随类（SuperTrend(10,3)翻转，主图绿/红轨道线），
-        <span className="text-amber-400/80">未经回测闸门验证，仅供参考</span>；大箭头 =
-        同日多规则共振。◉ 冠军信号来自 evolve 闸门验证过的策略实际翻仓点。底部色带 =
-        趋势（价格与MA50相对MA200位置）。
+        ▲▼ 经典信号（36种规则·六大类，<span className="text-amber-400/80">未经回测验证仅供参考</span>）：
+        精简模式只画同日多规则共振的大箭头，<span className="text-slate-300">鼠标悬停任意信号 bar
+        可看当天全部规则明细</span>。◉ 冠军 = evolve 闸门策略翻仓点。主图绿/红轨道 =
+        SuperTrend(10,3)，底部色带 = 均线趋势。
       </p>
 
-      <div ref={mainRef} className="h-[400px] w-full" />
+      <div className="relative">
+        <div ref={mainRef} className="h-[400px] w-full" />
+        <div
+          ref={tipRef}
+          className="pointer-events-none absolute z-20 hidden max-w-[340px] rounded-lg border border-white/10 bg-slate-900/95 px-3 py-2 text-xs shadow-xl"
+        />
+      </div>
       <div className="grid grid-cols-1 gap-1">
         <div>
           <p className="text-[10px] uppercase tracking-widest text-slate-500">MACD (12,26,9)</p>
