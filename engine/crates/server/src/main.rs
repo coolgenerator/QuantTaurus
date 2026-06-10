@@ -37,6 +37,10 @@ async fn main() -> anyhow::Result<()> {
         "SOLUSDT".into(),
     ]);
 
+    // 自动再训练调度器：每 QHH_AUTORETRAIN_HOURS 小时（默认 6，0=关闭）
+    // 用最新数据重跑 walk-forward 进化，冠军仅在留出集胜出时热更新
+    spawn_auto_retrain(state.clone());
+
     let app = Router::new()
         .route("/api/health", get(routes::health))
         .route("/api/klines", get(routes::klines))
@@ -54,4 +58,69 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn spawn_auto_retrain(state: Arc<AppState>) {
+    let hours: u64 = std::env::var("QHH_AUTORETRAIN_HOURS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(6);
+    if hours == 0 {
+        tracing::info!("auto-retrain disabled");
+        return;
+    }
+    let symbol = std::env::var("QHH_AUTORETRAIN_SYMBOL").unwrap_or_else(|_| "BTCUSDT".into());
+    let interval_s = std::env::var("QHH_AUTORETRAIN_INTERVAL").unwrap_or_else(|_| "4h".into());
+    let days: i64 = std::env::var("QHH_AUTORETRAIN_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(730);
+
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(hours * 3600));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick.tick().await; // 第一次立即触发的 tick 跳过，等满一个周期
+        loop {
+            tick.tick().await;
+            if matches!(
+                *state.evolve_status.lock().unwrap(),
+                state::EvolveStatus::Running { .. }
+            ) {
+                tracing::info!("auto-retrain skipped: evolve already running");
+                continue;
+            }
+            let Some(interval) = qcore::Interval::parse(&interval_s) else {
+                tracing::error!(interval_s, "auto-retrain: bad interval");
+                return;
+            };
+            let end = state::now_ms();
+            let start = end - days * 86_400_000;
+            match state.store.get(&symbol, interval, start, end).await {
+                Ok(klines) => {
+                    let mut cfg = auto_cfg_for(interval);
+                    cfg.bars_per_year = (365.25 * 86_400_000.0) / interval.millis() as f64;
+                    tracing::info!(symbol, interval_s, bars = klines.len(), "auto-retrain starting");
+                    state::launch_evolve(
+                        state.clone(),
+                        symbol.clone(),
+                        interval_s.clone(),
+                        klines,
+                        cfg,
+                    );
+                }
+                Err(e) => tracing::error!(error = %e, "auto-retrain: data fetch failed"),
+            }
+        }
+    });
+}
+
+/// 按周期自适应的窗口配置：训练≈1年、验证≈3个月、留出≈1.5个月
+fn auto_cfg_for(interval: qcore::Interval) -> qevolve::EvolveConfig {
+    let bars_per_day = 86_400_000 / interval.millis();
+    qevolve::EvolveConfig {
+        train_bars: (bars_per_day * 365) as usize,
+        valid_bars: (bars_per_day * 90) as usize,
+        holdout_bars: (bars_per_day * 45) as usize,
+        ..Default::default()
+    }
 }

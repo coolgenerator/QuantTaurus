@@ -22,8 +22,12 @@ pub struct EvolveConfig {
     pub generations: usize,
     /// 训练窗 bar 数
     pub train_bars: usize,
-    /// 验证窗 bar 数
+    /// 验证窗总 bar 数（会被切成 valid_folds 个不重叠折）
     pub valid_bars: usize,
+    /// 验证折数（CPCV-lite）：适应度 = 折均值 - 0.75×折标准差，
+    /// 惩罚只在某一段行情中赚钱的不稳定参数
+    #[serde(default = "default_valid_folds")]
+    pub valid_folds: usize,
     /// 留出窗 bar 数（最近的数据，仅用于冠军晋升判定）
     pub holdout_bars: usize,
     pub bars_per_year: f64,
@@ -31,6 +35,13 @@ pub struct EvolveConfig {
     pub seed: u64,
     /// 挑战者需超过冠军的 Sharpe 边际
     pub promotion_margin: f64,
+    /// 晋升绝对底线：挑战者留出 Sharpe 必须高于此值（默认 0）
+    #[serde(default)]
+    pub promotion_floor: f64,
+}
+
+fn default_valid_folds() -> usize {
+    3
 }
 
 impl Default for EvolveConfig {
@@ -41,11 +52,13 @@ impl Default for EvolveConfig {
             generations: 12,
             train_bars: 24 * 365,     // 1h bar ≈ 1年
             valid_bars: 24 * 90,      // ≈ 3个月
+            valid_folds: default_valid_folds(),
             holdout_bars: 24 * 45,    // ≈ 1.5个月
             bars_per_year: 8760.0,
             cost: CostModel::default(),
             seed: 7,
             promotion_margin: 0.1,
+            promotion_floor: 0.0,
         }
     }
 }
@@ -54,7 +67,11 @@ impl Default for EvolveConfig {
 pub struct Candidate {
     pub spec: StrategySpec,
     pub train_metrics: Metrics,
+    /// 整个验证区间（全部折拼起来）的指标，用于展示
     pub valid_metrics: Metrics,
+    /// 每折验证 Sharpe（适应度依据）
+    #[serde(default)]
+    pub fold_sharpes: Vec<f64>,
     pub holdout_metrics: Option<Metrics>,
     pub generation: usize,
     /// 父代在上一代种群中的序号（谱系图用）
@@ -105,28 +122,53 @@ pub fn evolve(
     let valid_w = &klines[valid_start.saturating_sub(WARMUP)..holdout_start];
     let holdout_w = &klines[holdout_start.saturating_sub(WARMUP)..];
 
+    // 验证区间切成 valid_folds 个不重叠折，每折带 WARMUP 前缀热身
+    let folds: Vec<&[Kline]> = {
+        let nf = cfg.valid_folds.max(1);
+        let fold_len = cfg.valid_bars / nf;
+        (0..nf)
+            .map(|i| {
+                let fs = valid_start + i * fold_len;
+                let fe = if i == nf - 1 { holdout_start } else { fs + fold_len };
+                &klines[fs.saturating_sub(WARMUP)..fe]
+            })
+            .collect()
+    };
+
     let mut rng = StdRng::seed_from_u64(cfg.seed);
     let mut evals = 0usize;
+
+    let mut make_candidate =
+        |spec: StrategySpec, generation: usize, parent: Option<usize>, evals: &mut usize| {
+            *evals += 1;
+            let fold_sharpes: Vec<f64> =
+                folds.iter().map(|f| eval(&spec, f, cfg, *evals).sharpe).collect();
+            Candidate {
+                train_metrics: eval(&spec, train, cfg, *evals),
+                valid_metrics: eval(&spec, valid_w, cfg, *evals),
+                fold_sharpes,
+                holdout_metrics: None,
+                spec,
+                generation,
+                parent,
+            }
+        };
 
     // 初始种群：四个家族均匀混合
     let mut pop: Vec<Candidate> = (0..cfg.population)
         .map(|i| {
             let spec = StrategySpec::random(i, &mut rng);
-            evals += 1;
-            Candidate {
-                train_metrics: eval(&spec, train, cfg, evals),
-                valid_metrics: eval(&spec, valid_w, cfg, evals),
-                holdout_metrics: None,
-                spec,
-                generation: 0,
-                parent: None,
-            }
+            make_candidate(spec, 0, None, &mut evals)
         })
         .collect();
 
     let fitness = |c: &Candidate| {
-        // 验证 Sharpe 为主，训练集亏损的直接重罚（防纯噪声）
-        let mut f = c.valid_metrics.sharpe;
+        // CPCV-lite：折均值 - 0.75×折标准差，要求每折都稳定赚钱
+        let k = c.fold_sharpes.len() as f64;
+        let mean = c.fold_sharpes.iter().sum::<f64>() / k;
+        let var = c.fold_sharpes.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / k;
+        let mut f = mean - 0.75 * var.sqrt();
+        // 训练集亏损的直接重罚（防纯噪声）
         if c.train_metrics.sharpe < 0.0 {
             f -= 1.0;
         }
@@ -142,15 +184,7 @@ pub fn evolve(
         for j in 0..cfg.offspring {
             let pidx = j % pop.len();
             let spec = pop[pidx].spec.mutate(&mut rng);
-            evals += 1;
-            children.push(Candidate {
-                train_metrics: eval(&spec, train, cfg, evals),
-                valid_metrics: eval(&spec, valid_w, cfg, evals),
-                holdout_metrics: None,
-                spec,
-                generation: gen,
-                parent: Some(pidx),
-            });
+            children.push(make_candidate(spec, gen, Some(pidx), &mut evals));
         }
         pop.extend(children);
         pop.sort_by(|a, b| fitness(b).partial_cmp(&fitness(a)).unwrap());
@@ -164,25 +198,29 @@ pub fn evolve(
     challenger.holdout_metrics = Some(eval(&challenger.spec, holdout_w, cfg, evals));
     let challenger_ho = challenger.holdout_metrics.as_ref().unwrap().sharpe;
 
+    // 绝对底线：留出集 Sharpe ≤ 0 的挑战者永不晋升（即使没有现任冠军——
+    // 宁可空缺也不上一个在最新数据上亏钱的策略）
+    let passes_floor = challenger_ho > cfg.promotion_floor;
+
     let (champion, promoted) = match incumbent {
         Some(inc) => {
             let inc_ho = eval(inc, holdout_w, cfg, evals).sharpe;
-            if challenger_ho > inc_ho + cfg.promotion_margin {
+            if passes_floor && challenger_ho > inc_ho + cfg.promotion_margin {
                 (challenger.clone(), true)
             } else {
-                let mut keep = Candidate {
+                let keep = Candidate {
                     spec: inc.clone(),
                     train_metrics: eval(inc, train, cfg, evals),
                     valid_metrics: eval(inc, valid_w, cfg, evals),
+                    fold_sharpes: folds.iter().map(|f| eval(inc, f, cfg, evals).sharpe).collect(),
                     holdout_metrics: Some(eval(inc, holdout_w, cfg, evals)),
                     generation: 0,
                     parent: None,
                 };
-                keep.holdout_metrics = Some(eval(inc, holdout_w, cfg, evals));
                 (keep, false)
             }
         }
-        None => (challenger.clone(), true),
+        None => (challenger.clone(), passes_floor),
     };
 
     Ok(EvolveReport {
@@ -238,8 +276,11 @@ mod tests {
             ..Default::default()
         };
         let rep = evolve(&ks, &cfg, None).unwrap();
-        assert!(rep.promoted);
+        // 晋升当且仅当挑战者通过留出底线
+        let ho = rep.champion.holdout_metrics.as_ref().unwrap().sharpe;
+        assert_eq!(rep.promoted, ho > cfg.promotion_floor);
         assert_eq!(rep.fitness_curve.len(), 3);
         assert!(rep.total_evaluations > 0);
+        assert_eq!(rep.champion.fold_sharpes.len(), cfg.valid_folds);
     }
 }

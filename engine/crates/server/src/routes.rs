@@ -1,6 +1,6 @@
 //! HTTP / WS 路由处理。
 
-use crate::state::{now_ms, AppState, EvolveStatus, LineageEntry, WsMessage};
+use crate::state::{now_ms, AppState, EvolveStatus};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -164,59 +164,14 @@ pub async fn evolve_start(
     let mut cfg = req.config.unwrap_or_default();
     cfg.bars_per_year = (365.25 * 86_400_000.0) / interval.millis() as f64;
 
-    *state.evolve_status.lock().unwrap() = EvolveStatus::Running {
-        started_ms: now_ms(),
-    };
-
-    let st2 = state.clone();
-    let symbol = req.symbol.to_uppercase();
-    let interval_s = req.interval.clone();
     // CPU 密集型任务放 blocking 线程，不阻塞 tokio
-    tokio::task::spawn_blocking(move || {
-        let incumbent = {
-            let champ = st2.champion.lock().unwrap();
-            if champ.symbol == symbol && champ.interval == interval_s {
-                champ.spec.clone()
-            } else {
-                None
-            }
-        };
-        let result = qevolve::evolve(&klines, &cfg, incumbent.as_ref());
-        match result {
-            Ok(report) => {
-                if report.promoted {
-                    let mut champ = st2.champion.lock().unwrap();
-                    champ.spec = Some(report.champion.spec.clone());
-                    champ.symbol = symbol;
-                    champ.interval = interval_s;
-                    champ.updated_ms = now_ms();
-                    champ.lineage.push(LineageEntry {
-                        spec: report.champion.spec.clone(),
-                        holdout_sharpe: report
-                            .champion
-                            .holdout_metrics
-                            .as_ref()
-                            .map_or(0.0, |m| m.sharpe),
-                        promoted_ms: now_ms(),
-                    });
-                    drop(champ);
-                    st2.save_champion();
-                }
-                let _ = st2.ws_tx.send(WsMessage::EvolveDone {
-                    promoted: report.promoted,
-                    champion_name: report.champion.spec.name().to_string(),
-                });
-                *st2.evolve_status.lock().unwrap() = EvolveStatus::Done {
-                    report: Box::new(report),
-                };
-            }
-            Err(e) => {
-                *st2.evolve_status.lock().unwrap() = EvolveStatus::Failed {
-                    error: e.to_string(),
-                };
-            }
-        }
-    });
+    crate::state::launch_evolve(
+        state.clone(),
+        req.symbol.to_uppercase(),
+        req.interval.clone(),
+        klines,
+        cfg,
+    );
 
     Ok(Json(json!({"started": true})))
 }

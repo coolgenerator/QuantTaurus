@@ -105,6 +105,64 @@ impl AppState {
     }
 }
 
+/// 在 blocking 线程上启动一轮进化（路由和自动再训练调度器共用）。
+/// 调用前须自行确认 evolve_status 不在 Running。
+pub fn launch_evolve(
+    state: std::sync::Arc<AppState>,
+    symbol: String,
+    interval_s: String,
+    klines: Vec<qcore::Kline>,
+    cfg: qevolve::EvolveConfig,
+) {
+    *state.evolve_status.lock().unwrap() = EvolveStatus::Running {
+        started_ms: now_ms(),
+    };
+    tokio::task::spawn_blocking(move || {
+        let incumbent = {
+            let champ = state.champion.lock().unwrap();
+            if champ.symbol == symbol && champ.interval == interval_s {
+                champ.spec.clone()
+            } else {
+                None
+            }
+        };
+        match qevolve::evolve(&klines, &cfg, incumbent.as_ref()) {
+            Ok(report) => {
+                if report.promoted {
+                    let mut champ = state.champion.lock().unwrap();
+                    champ.spec = Some(report.champion.spec.clone());
+                    champ.symbol = symbol;
+                    champ.interval = interval_s;
+                    champ.updated_ms = now_ms();
+                    champ.lineage.push(LineageEntry {
+                        spec: report.champion.spec.clone(),
+                        holdout_sharpe: report
+                            .champion
+                            .holdout_metrics
+                            .as_ref()
+                            .map_or(0.0, |m| m.sharpe),
+                        promoted_ms: now_ms(),
+                    });
+                    drop(champ);
+                    state.save_champion();
+                }
+                let _ = state.ws_tx.send(WsMessage::EvolveDone {
+                    promoted: report.promoted,
+                    champion_name: report.champion.spec.name().to_string(),
+                });
+                *state.evolve_status.lock().unwrap() = EvolveStatus::Done {
+                    report: Box::new(report),
+                };
+            }
+            Err(e) => {
+                *state.evolve_status.lock().unwrap() = EvolveStatus::Failed {
+                    error: e.to_string(),
+                };
+            }
+        }
+    });
+}
+
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -12,11 +12,16 @@
 - [x] P5 server crate：axum REST（/klines /factors /backtest /evolve /champion）+ WS（/ws 实时行情+进化事件）— 全部端点已冒烟测试通过
 - [x] P6 web 前端：React+Vite+Tailwind+lightweight-charts 暗色霓虹仪表盘，build 零错误（commit 5e5198b）
 - [x] P7 集成联调：Vite 代理验证通过（注意：本机 5173 被其他项目占用，我们的前端在 **5174**）；2年BTC 1h 全量进化（600 evals）端到端跑通
-- [ ] P8 策略质量迭代（当前冠军留出 Sharpe 为负，需改进）：
-      a. 适应度改为多折验证（CPCV-lite：≥3 个不重叠验证窗的平均/最差 Sharpe）+ 换手惩罚
-      b. 尝试 4h / 1d 周期（噪声小、成本拖累低）与 ETHUSDT/SOLUSDT 多标的稳健性筛选
-      c. server 内置自动再训练调度器（每N小时自动重跑进化）
-- [ ] P9 打磨：README 完善、回测报告导出
+- [x] P8a 多折验证适应度（CPCV-lite：3折，fitness = 折均值 - 0.75×折标准差）
+- [x] P8b 4h 周期 BTC/ETH 实验（见下方发现）
+- [x] P8c 自动再训练调度器（QHH_AUTORETRAIN_HOURS 默认6h，0=关；SYMBOL/INTERVAL/DAYS 可配）
+- [x] P8d 晋升绝对底线 promotion_floor（留出 Sharpe ≤0 永不晋升，宁缺毋滥；champion.json 已清空重置）
+- [ ] P9 策略质量继续迭代（核心难题：留出窗 regime shift）：
+      a. 1d 周期 + 长回看 TSMOM/vol-managed（文献最稳的组合）多标的实验
+      b. 冠军改为 top-k 多样化组合（ensemble 平均仓位）而非单一参数点
+      c. 适应度直接用 DSR；折窗改为跨整个历史散布（非连续）
+      d. 考虑 3-4 年数据（穿越多个牛熊）
+- [ ] P10 打磨：README 完善、回测报告导出、前端展示 fold_sharpes
 
 ## 当前进度备注
 
@@ -33,6 +38,12 @@
     holdout 不达标 → 正确拒绝晋升。说明 1h 单标的 + 单验证窗易过拟合，
     P8a/P8b 是下一步重点。
   - 经验：单验证窗的 (μ+λ) 搜索会把 valid 窗也"用旧"——fitness 必须多折。
+- 2026-06-09 23:3x: P8a-d 完成。4h 多折实验（BTC/ETH 各 600 evals）：
+  - 折间 Sharpe 已稳定为正（BTC [3.34,1.18,3.64]，ETH [2.41,3.28,2.87]）
+    但留出 45 天仍为负（-2.57/-1.70）→ 是 regime shift 不是工具 bug。
+  - 结论：2 年数据 + 相邻折不足以泛化到最新行情，P9a-d 是对策。
+  - 实验产物：/tmp/qhh-evolve-{BTCUSDT,ETHUSDT}-4h.json
+  - 服务运行中：release server :8787（auto-retrain 6h），Vite dev :5174
 
 ## 约定
 
