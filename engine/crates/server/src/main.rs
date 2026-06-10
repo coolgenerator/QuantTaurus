@@ -62,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/paper", get(routes::paper))
         .route("/api/sectors", get(routes::sectors))
         .route("/api/plan", get(routes::plan))
+        .route("/api/search", get(routes::search))
         .route("/ws", get(routes::ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);

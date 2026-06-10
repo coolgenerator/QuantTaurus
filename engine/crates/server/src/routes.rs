@@ -253,6 +253,22 @@ pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(json!({"active": !sessions.is_empty(), "sessions": sessions}))
 }
 
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    q: String,
+}
+
+pub async fn search(Query(q): Query<SearchQuery>) -> AppResult<impl IntoResponse> {
+    if q.q.trim().len() < 2 {
+        return Ok(Json(json!([])));
+    }
+    let hits = qdata::YahooClient::new()
+        .search(q.q.trim())
+        .await
+        .map_err(internal)?;
+    Ok(Json(serde_json::to_value(hits).map_err(internal)?))
+}
+
 pub async fn plan(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
     let plans = crate::plan::build_plans(&state).await.map_err(internal)?;
     Ok(Json(plans))
