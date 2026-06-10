@@ -201,6 +201,41 @@ export function fetchTa(symbol: string, interval: string, days = 730): Promise<T
   return getJson(`/api/ta?symbol=${symbol}&interval=${interval}&days=${days}`)
 }
 
+/** Historical per-rule statistics over the 50+ stock universe (signed forward returns). */
+export interface TaRuleStat {
+  rule: string
+  side: 'buy' | 'sell'
+  n: number
+  /** P(signed 10-day return > 0). */
+  win10: number
+  /** Mean / median signed 10-day return (fraction, 0.01 = 1%). */
+  avg10: number
+  med10: number
+  /** Best holding day on the mean curve (1..=20). */
+  best_day: number
+  /** Mean of per-event peak-return day — expected take-profit timing. */
+  exp_tp_day: number
+  /** Mean signed return for day 1..=20. */
+  curve: number[]
+  /** Histogram counts of signed 10d returns (bins from bin_edges). */
+  hist: number[]
+}
+
+export interface TaStatsResponse {
+  computed_ms: number
+  symbols: number
+  events: number
+  horizon: number
+  headline: number
+  bin_edges: number[]
+  rules: TaRuleStat[]
+}
+
+/** First call computes over the full universe (~10s); cached 6h server-side after. */
+export function fetchTaStats(): Promise<TaStatsResponse> {
+  return getJson('/api/ta/stats')
+}
+
 // ---------- Trade plans ----------
 
 export interface TradePlan {

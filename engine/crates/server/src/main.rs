@@ -17,6 +17,7 @@ mod routes;
 mod sectors;
 mod state;
 mod ta;
+mod ta_stats;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -59,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/klines", get(routes::klines))
         .route("/api/factors", get(routes::factors))
         .route("/api/ta", get(routes::ta))
+        .route("/api/ta/stats", get(routes::ta_stats))
         .route("/api/backtest", post(routes::backtest))
         .route("/api/evolve", post(routes::evolve_start))
         .route("/api/evolve/status", get(routes::evolve_status))

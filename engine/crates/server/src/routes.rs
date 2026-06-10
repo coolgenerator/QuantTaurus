@@ -714,6 +714,22 @@ pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoR
     Ok(Json(val))
 }
 
+/// 技术规则历史统计：52标的×10年日线，6小时缓存（首次计算可能拉数据，秒级~分钟级）
+pub async fn ta_stats(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+    {
+        let cache = state.ta_stats_cache.lock().unwrap();
+        if let Some((ts, val)) = cache.as_ref() {
+            if now_ms() - ts < crate::ta_stats::CACHE_TTL_MS {
+                return Ok(Json(val.clone()));
+            }
+        }
+    }
+    let report = crate::ta_stats::compute(&state).await.map_err(internal)?;
+    let val = serde_json::to_value(&report).map_err(internal)?;
+    *state.ta_stats_cache.lock().unwrap() = Some((now_ms(), val.clone()));
+    Ok(Json(val))
+}
+
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,
