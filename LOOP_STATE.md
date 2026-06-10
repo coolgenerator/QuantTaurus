@@ -38,10 +38,12 @@
       设备/电力），sectors.rs 横截面动量轮动信号（rel+accel+breadth z合成），
       /api/sectors 10min 缓存；TopBar 股票按板块分组；SectorPanel 前端
       （agent 构建中：排行榜+热力格+联动主图）
-- [ ] P12 股票实时报价轮询（盘中每5s Yahoo quote → 合成 MarketEvent，
-      让股票K线和 paper 也实时跳动；注意盘外静默）
-- [ ] P13 打磨：lint 基线清理、回测报告导出、热门个股进化实验（NVDA/MU 等）
-- [ ] P14 可选：VIX regime 过滤因子、基本面数据（FRED宏观）接入
+- [x] P12 美股盘中报价轮询（15s，仅模拟盘股票，盘外静默）
+- [x] P13a 热门个股实验：NVDA(holdout 0.37/DSR 0.94)、MU ensemble(2.24)、
+      AMD(1.48) 全部晋升 → 注册表 6 冠军并行模拟盘
+- [ ] P13b 打磨：lint 基线清理、回测报告导出
+- [ ] P14 可选：VIX regime 过滤因子、基本面数据（FRED宏观）接入、
+      SectorPanel 加「一键对热点板块成分股跑进化」按钮
 
 ## 当前进度备注
 
