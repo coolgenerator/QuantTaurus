@@ -36,6 +36,11 @@ pub struct TaResponse {
     pub kdj_k: Vec<Option<f64>>,
     pub kdj_d: Vec<Option<f64>>,
     pub kdj_j: Vec<Option<f64>>,
+    /// SuperTrend(10,3)：多头段走下轨（绿）/ 空头段走上轨（红），分两列方便前端着色
+    pub st_up: Vec<Option<f64>>,
+    pub st_dn: Vec<Option<f64>>,
+    /// ADX(14) 趋势强度：>25 视为强趋势
+    pub adx: Vec<Option<f64>>,
     /// 每 bar 趋势：1 多头 / -1 空头 / 0 震荡或 MA200 未就绪
     pub trend: Vec<i8>,
     pub classic_signals: Vec<TaSignal>,
@@ -154,6 +159,130 @@ fn td9(close: &[f64]) -> Vec<(usize, &'static str)> {
             out.push((i, "sell"));
             sell_cnt = 0;
         }
+    }
+    out
+}
+
+/// 批次5：SuperTrend(n, mult)。返回 (多头段线, 空头段线, 翻转点列表)。
+/// Wilder ATR + 带钳制的上下轨，价格穿越触发方向翻转。
+fn supertrend(klines: &[Kline], n: usize, mult: f64) -> (Vec<f64>, Vec<f64>, Vec<(usize, &'static str)>) {
+    let len = klines.len();
+    let mut st_up = vec![f64::NAN; len];
+    let mut st_dn = vec![f64::NAN; len];
+    let mut flips = Vec::new();
+    if len <= n + 1 {
+        return (st_up, st_dn, flips);
+    }
+    // Wilder ATR
+    let mut atr = vec![f64::NAN; len];
+    let tr = |i: usize| -> f64 {
+        let k = &klines[i];
+        let pc = klines[i - 1].close;
+        (k.high - k.low).max((k.high - pc).abs()).max((k.low - pc).abs())
+    };
+    let mut sum = 0.0;
+    for i in 1..=n {
+        sum += tr(i);
+    }
+    atr[n] = sum / n as f64;
+    for i in n + 1..len {
+        atr[i] = (atr[i - 1] * (n as f64 - 1.0) + tr(i)) / n as f64;
+    }
+    // 带钳制的轨道 + 方向
+    let (mut upper, mut lower) = (f64::NAN, f64::NAN);
+    let mut dir: i8 = 0;
+    for i in n..len {
+        let hl2 = (klines[i].high + klines[i].low) / 2.0;
+        let ub = hl2 + mult * atr[i];
+        let lb = hl2 - mult * atr[i];
+        let c_prev = klines[i - 1].close;
+        upper = if !upper.is_finite() || ub < upper || c_prev > upper { ub } else { upper };
+        lower = if !lower.is_finite() || lb > lower || c_prev < lower { lb } else { lower };
+        let prev_dir = dir;
+        let c = klines[i].close;
+        dir = match prev_dir {
+            1 => {
+                if c < lower {
+                    -1
+                } else {
+                    1
+                }
+            }
+            -1 => {
+                if c > upper {
+                    1
+                } else {
+                    -1
+                }
+            }
+            _ => {
+                if c > upper {
+                    1
+                } else {
+                    -1
+                }
+            }
+        };
+        if prev_dir != 0 && dir != prev_dir {
+            flips.push((i, if dir == 1 { "buy" } else { "sell" }));
+            // 翻转后轨道重置为本根基础值，教科书口径
+            if dir == 1 {
+                lower = lb;
+            } else {
+                upper = ub;
+            }
+        }
+        if dir == 1 {
+            st_up[i] = lower;
+        } else {
+            st_dn[i] = upper;
+        }
+    }
+    (st_up, st_dn, flips)
+}
+
+/// ADX(n)，Wilder 平滑。
+fn adx(klines: &[Kline], n: usize) -> Vec<f64> {
+    let len = klines.len();
+    let mut out = vec![f64::NAN; len];
+    if len <= 2 * n {
+        return out;
+    }
+    let (mut s_tr, mut s_pdm, mut s_ndm) = (0.0, 0.0, 0.0);
+    let mut dx = vec![f64::NAN; len];
+    for i in 1..len {
+        let k = &klines[i];
+        let p = &klines[i - 1];
+        let tr = (k.high - k.low).max((k.high - p.close).abs()).max((k.low - p.close).abs());
+        let up = k.high - p.high;
+        let dn = p.low - k.low;
+        let pdm = if up > dn && up > 0.0 { up } else { 0.0 };
+        let ndm = if dn > up && dn > 0.0 { dn } else { 0.0 };
+        if i <= n {
+            s_tr += tr;
+            s_pdm += pdm;
+            s_ndm += ndm;
+        } else {
+            s_tr = s_tr - s_tr / n as f64 + tr;
+            s_pdm = s_pdm - s_pdm / n as f64 + pdm;
+            s_ndm = s_ndm - s_ndm / n as f64 + ndm;
+        }
+        if i >= n && s_tr > 0.0 {
+            let pdi = 100.0 * s_pdm / s_tr;
+            let ndi = 100.0 * s_ndm / s_tr;
+            if pdi + ndi > 0.0 {
+                dx[i] = 100.0 * (pdi - ndi).abs() / (pdi + ndi);
+            }
+        }
+    }
+    // ADX = DX 的 Wilder 平滑
+    let mut sum = 0.0;
+    for i in n..2 * n {
+        sum += dx[i];
+    }
+    out[2 * n - 1] = sum / n as f64;
+    for i in 2 * n..len {
+        out[i] = (out[i - 1] * (n as f64 - 1.0) + dx[i]) / n as f64;
     }
     out
 }
@@ -396,6 +525,16 @@ pub fn build(
     divs.extend(divergences(&c, &rsi14, 4, 60, "RSI"));
     divs.extend(candle_patterns(klines, &ma20));
     divs.extend(structure_patterns(&c, 4));
+    let (st_up, st_dn, st_flips) = supertrend(klines, 10, 3.0);
+    let adx14 = adx(klines, 14);
+    for (i, side) in st_flips {
+        let (map, rule) = if side == "buy" {
+            (&mut extra_buy, "SuperTrend翻多")
+        } else {
+            (&mut extra_sell, "SuperTrend翻空")
+        };
+        map.entry(i).or_default().push(rule.to_string());
+    }
     for (i, side, rule) in divs {
         let map = if side == "buy" { &mut extra_buy } else { &mut extra_sell };
         map.entry(i).or_default().push(rule);
@@ -584,6 +723,9 @@ pub fn build(
         kdj_k: opt(&kdj_k),
         kdj_d: opt(&kdj_d),
         kdj_j: opt(&kdj_j),
+        st_up: opt(&st_up),
+        st_dn: opt(&st_dn),
+        adx: opt(&adx14),
         trend,
         classic_signals,
         champion_signals,
@@ -715,6 +857,21 @@ mod tests {
             hits.iter().any(|(j, side, r)| *j == 24 && *side == "sell" && r == "双顶颈线破位"),
             "got {hits:?}"
         );
+    }
+
+    #[test]
+    fn supertrend_flips_on_v_shape() {
+        // 先跌后涨的 V 形：SuperTrend 应先空后翻多，且两列不同时有值
+        let mut closes: Vec<f64> = (0..40).map(|i| 200.0 - 3.0 * i as f64).collect();
+        closes.extend((0..40).map(|i| 80.0 + 3.0 * i as f64));
+        let ks = fake_klines(&closes);
+        let (st_up, st_dn, flips) = supertrend(&ks, 10, 3.0);
+        assert!(flips.iter().any(|(_, s)| *s == "buy"), "expected a buy flip, got {flips:?}");
+        for i in 0..ks.len() {
+            assert!(!(st_up[i].is_finite() && st_dn[i].is_finite()), "both rails at {i}");
+        }
+        let a = adx(&ks, 14);
+        assert!(a.iter().any(|x| x.is_finite() && *x > 25.0), "strong trend should push ADX>25");
     }
 
     #[test]

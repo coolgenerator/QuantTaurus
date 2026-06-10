@@ -181,6 +181,11 @@ export interface TaResponse {
   kdj_k: (number | null)[]
   kdj_d: (number | null)[]
   kdj_j: (number | null)[]
+  /** SuperTrend(10,3): bull-leg rail / bear-leg rail (mutually exclusive per bar). */
+  st_up: (number | null)[]
+  st_dn: (number | null)[]
+  /** ADX(14) trend strength; >25 = strong trend. */
+  adx: (number | null)[]
   /** Per-bar trend: 1 bull / -1 bear / 0 range (or MA200 warming up). */
   trend: number[]
   /** Textbook-rule signals — NOT validated by the backtest gate; reference only. */

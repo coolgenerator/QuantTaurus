@@ -153,6 +153,9 @@ export default function TechPanel({ symbol, interval }: Props) {
     S.bollUp = line('rgba(148,163,184,0.45)', 1, LineStyle.Dashed)
     S.bollMid = line('rgba(148,163,184,0.3)', 1)
     S.bollDn = line('rgba(148,163,184,0.45)', 1, LineStyle.Dashed)
+    // SuperTrend(10,3)：多头段绿轨在价格下方，空头段红轨在上方
+    S.stUp = line('rgba(52,211,153,0.85)', 2)
+    S.stDn = line('rgba(251,113,133,0.85)', 2)
     // 趋势色带：底部细 histogram，绿=多头/红=空头/灰=震荡
     S.trend = main.addHistogramSeries({ priceScaleId: 'trend', priceLineVisible: false, lastValueVisible: false })
     main.priceScale('trend').applyOptions({ scaleMargins: { top: 0.97, bottom: 0 }, visible: false })
@@ -218,6 +221,8 @@ export default function TechPanel({ symbol, interval }: Props) {
         S.bollUp.setData(lineData(t, taResp.boll_up))
         S.bollMid.setData(lineData(t, taResp.boll_mid))
         S.bollDn.setData(lineData(t, taResp.boll_dn))
+        S.stUp.setData(lineData(t, taResp.st_up))
+        S.stDn.setData(lineData(t, taResp.st_dn))
         S.trend.setData(
           t.map((tm, i) => ({
             time: toUnixSec(tm) as UTCTimestamp,
@@ -267,6 +272,7 @@ export default function TechPanel({ symbol, interval }: Props) {
 
   const trendNow = ta ? TREND_LABEL[ta.trend[ta.trend.length - 1] ?? 0] : null
   const rsiNow = ta ? lastVal(ta.rsi14) : null
+  const adxNow = ta ? lastVal(ta.adx) : null
 
   return (
     <section className="glass-card relative flex flex-col gap-2 p-4">
@@ -288,6 +294,11 @@ export default function TechPanel({ symbol, interval }: Props) {
                 label="RSI14"
                 value={fmtNum(rsiNow, 1)}
                 cls={rsiNow !== null && rsiNow > 70 ? 'text-neon-red' : rsiNow !== null && rsiNow < 30 ? 'text-neon-green' : undefined}
+              />
+              <Chip
+                label="ADX14"
+                value={adxNow !== null ? `${fmtNum(adxNow, 1)} ${adxNow > 25 ? '强趋势' : '弱趋势'}` : '—'}
+                cls={adxNow !== null && adxNow > 25 ? 'text-amber-300' : undefined}
               />
             </>
           )}
@@ -321,7 +332,7 @@ export default function TechPanel({ symbol, interval }: Props) {
         计数类（神奇九转TD9）、背离类（MACD·RSI顶底背离，第二摆动点确认后第4根bar标注）、
         突破类（唐奇安20日·放量，同向10根内只标首次）、K线形态类（吞没/锤子上吊/流星/启明黄昏星/
         红三兵乌鸦/趋势末端十字星，均带MA20趋势背景过滤）、结构类（双顶双底/头肩，
-        颈线破位才标注），
+        颈线破位才标注）、趋势跟随类（SuperTrend(10,3)翻转，主图绿/红轨道线），
         <span className="text-amber-400/80">未经回测闸门验证，仅供参考</span>；大箭头 =
         同日多规则共振。◉ 冠军信号来自 evolve 闸门验证过的策略实际翻仓点。底部色带 =
         趋势（价格与MA50相对MA200位置）。
