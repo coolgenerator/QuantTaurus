@@ -24,11 +24,17 @@
          （4折全正 [0.62,1.65,1.63,0.51]，holdout Sharpe +0.48 / 年化+26%）
          BTC -0.06 / ETH -0.31 接近但未达 floor，未晋升（正确）
       d. 前端展示 fold_sharpes 徽章
-- [ ] P10 实盘模拟（paper trading）：把注册表冠军接到实时 WS 流上，
-      live 信号 → 模拟仓位 → 实时净值曲线推到前端新面板（核心卖点）
-- [ ] P11 打磨：README 完善（含 P9 实验结论）、champion 注册表改多槽
-      （按 symbol+interval 各存一个冠军）、回测报告导出
-- [ ] P12 可选：更多种子/更长历史重跑 BTC/ETH；资金费率 carry 数据源
+- [x] P10 实盘模拟（paper trading）：后端引擎（mark-to-market + 周期调仓 +
+      冠军热更新）+ 前端 PaperPanel，已验证 WS 推送
+- [x] P10.5 美股支持（用户要求）：Yahoo 数据源、252 交易日年化、低佣金成本、
+      前端分组选择器。实验：SPY ensemble 留出 Sharpe 1.59 晋升 ✅，
+      QQQ vol-managed 0.52 晋升 ✅ —— 股票边际显著好于加密
+- [ ] P11 多槽冠军注册表（急迫：QQQ 晋升把 SPY/SOL 冠军顶掉了——
+      champion.json 改为 {"SPY|1d": {...}, "QQQ|1d": {...}} 映射，
+      /api/champion 返回全部，paper 引擎每个冠军各开一个会话）
+- [ ] P12 股票实时报价轮询（盘中每5s Yahoo quote → 合成 MarketEvent，
+      让股票K线和 paper 也实时跳动；注意盘外静默）
+- [ ] P13 打磨：lint 基线清理、回测报告导出、^GSPC/^IXIC/单股实验
 
 ## 当前进度备注
 
