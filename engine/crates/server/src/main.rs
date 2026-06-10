@@ -46,6 +46,10 @@ async fn main() -> anyhow::Result<()> {
     // 实时模拟盘：冠军策略接实时行情，mark-to-market + 周期调仓
     paper::start_paper_engine(state.clone());
 
+    // 美股盘中报价轮询：为有模拟盘会话的股票每15s合成 Trade 事件
+    // （Yahoo 无免费 WS；复用 Market 事件管道驱动前端闪价与模拟盘 mark）
+    spawn_stock_quote_poller(state.clone());
+
     let app = Router::new()
         .route("/api/health", get(routes::health))
         .route("/api/klines", get(routes::klines))
@@ -118,6 +122,60 @@ fn spawn_auto_retrain(state: Arc<AppState>) {
                     );
                 }
                 Err(e) => tracing::error!(error = %e, "auto-retrain: data fetch failed"),
+            }
+        }
+    });
+}
+
+/// 粗略的美股盘中判断（UTC 周一~周五 13:30–20:00；不处理假日与夏令时1小时偏差）
+fn us_market_open() -> bool {
+    let secs = state::now_ms() / 1000;
+    let days = secs / 86_400;
+    // 1970-01-01 是周四：dow 0=Thu 1=Fri 2=Sat 3=Sun 4=Mon 5=Tue 6=Wed
+    let dow = days % 7;
+    if dow == 2 || dow == 3 {
+        return false;
+    }
+    let tod = secs % 86_400;
+    (13 * 3600 + 1800..20 * 3600).contains(&tod)
+}
+
+fn spawn_stock_quote_poller(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let yahoo = qdata::YahooClient::new();
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if !us_market_open() {
+                continue;
+            }
+            let mut symbols: Vec<String> = state
+                .paper
+                .lock()
+                .unwrap()
+                .values()
+                .map(|s| s.symbol.clone())
+                .filter(|s| !qdata::is_crypto(s))
+                .collect();
+            symbols.sort();
+            symbols.dedup();
+            for sym in symbols {
+                match yahoo.last_price(&sym).await {
+                    Ok((t, price)) => {
+                        let time = if t > 0 { t } else { state::now_ms() };
+                        let _ = state.ws_tx.send(state::WsMessage::Market(
+                            qcore::MarketEvent::Trade {
+                                symbol: sym,
+                                time,
+                                price,
+                                qty: 0.0,
+                                is_buyer_maker: false,
+                            },
+                        ));
+                    }
+                    Err(e) => tracing::debug!(sym, error = %e, "quote poll failed"),
+                }
             }
         }
     });
