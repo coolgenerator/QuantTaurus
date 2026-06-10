@@ -11,6 +11,7 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MineConfig {
     pub population: usize,
     pub generations: usize,
