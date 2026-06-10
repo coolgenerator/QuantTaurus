@@ -19,7 +19,9 @@ interface Props {
 
 const UP = '#34d399'
 const DOWN = '#fb7185'
-const DAYS = 730 // MA200 需要足够暖机 bar
+const INITIAL_DAYS = 730 // MA200 需要足够暖机 bar
+/** 左滑加载的天数上限：日线20年；小时级数据源最多~4年 */
+const maxDays = (interval: string) => (interval === '1d' ? 7300 : 1460)
 
 const CHART_OPTS = {
   layout: {
@@ -202,6 +204,12 @@ export default function TechPanel({ symbol, interval }: Props) {
   const taRef = useRef<TaResponse | null>(null)
   const sigMapRef = useRef<Map<number, BarSignal[]>>(new Map())
 
+  const [days, setDays] = useState(INITIAL_DAYS)
+  // 左滑加载更多：防重入 + 记录上次成功加载的 symbol|interval（区分"加载更早"与"换标的"）
+  const fetchingRef = useRef(false)
+  const loadedKeyRef = useRef('')
+  const loadMoreRef = useRef<() => void>(() => {})
+
   const [ta, setTa] = useState<TaResponse | null>(null)
   const [stats, setStats] = useState<TaStatsResponse | null>(null)
   const [statScope, setStatScope] = useState<'uni' | 'sym'>('uni')
@@ -313,6 +321,11 @@ export default function TechPanel({ symbol, interval }: Props) {
       tip.style.top = `${y}px`
     })
 
+    // 左滑触底自动加载更早历史（视野贴近最左10根bar时触发）
+    main.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (range && range.from < 10) loadMoreRef.current()
+    })
+
     // 时间轴四图联动（guard 防递归）
     let syncing = false
     for (const src of charts) {
@@ -332,14 +345,32 @@ export default function TechPanel({ symbol, interval }: Props) {
     }
   }, [])
 
+  // 最新闭包：左滑加载更早数据（翻倍直到上限）
+  loadMoreRef.current = () => {
+    if (fetchingRef.current || loading) return
+    const max = maxDays(interval)
+    if (days >= max) return
+    setDays(Math.min(days * 2, max))
+  }
+
   // 数据加载：K线 + TA 并行，按时间对齐（两次请求间可能差一根 bar）。
   useEffect(() => {
+    const key = `${symbol}|${interval}`
+    // 换标的/周期：先把窗口重置回初始值（本次effect让位给重置后的那次）
+    if (loadedKeyRef.current !== key && days !== INITIAL_DAYS) {
+      setDays(INITIAL_DAYS)
+      return
+    }
+    const isMore = loadedKeyRef.current === key
     let cancelled = false
-    setLoading(true)
+    fetchingRef.current = true
+    setLoading(!isMore) // 加载更早历史时不盖全屏遮罩
     setError(null)
-    Promise.all([fetchKlines(symbol, interval, DAYS), fetchTa(symbol, interval, DAYS)])
+    Promise.all([fetchKlines(symbol, interval, days), fetchTa(symbol, interval, days)])
       .then(([klines, taResp]) => {
         if (cancelled || !chartsRef.current.length) return
+        const prevLen = taRef.current?.times.length ?? 0
+        const viewRange = chartsRef.current[0].timeScale().getVisibleLogicalRange()
         const S = seriesRef.current
         const taTimes = new Set(taResp.times.map(toUnixSec))
         S.candle.setData(
@@ -389,21 +420,33 @@ export default function TechPanel({ symbol, interval }: Props) {
         S.kdjK.setData(lineData(t, taResp.kdj_k))
         S.kdjD.setData(lineData(t, taResp.kdj_d))
         S.kdjJ.setData(lineData(t, taResp.kdj_j))
-        chartsRef.current[0]?.timeScale().fitContent()
+        // 加载更早历史：按新增bar数平移视野，画面不跳；换标的则适配全幅
+        if (isMore && viewRange && taResp.times.length > prevLen) {
+          const shift = taResp.times.length - prevLen
+          chartsRef.current[0]
+            .timeScale()
+            .setVisibleLogicalRange({ from: viewRange.from + shift, to: viewRange.to + shift })
+        } else if (!isMore) {
+          chartsRef.current[0]?.timeScale().fitContent()
+        }
+        loadedKeyRef.current = key
+        fetchingRef.current = false
         taRef.current = taResp
         sigMapRef.current = buildSigMap(taResp)
         setTa(taResp)
         setLoading(false)
       })
       .catch((e: unknown) => {
+        fetchingRef.current = false
         if (cancelled) return
         setError(e instanceof Error ? e.message : String(e))
         setLoading(false)
       })
     return () => {
       cancelled = true
+      fetchingRef.current = false
     }
-  }, [symbol, interval])
+  }, [symbol, interval, days])
 
   // 信号层开关 → 重建 markers。
   useEffect(() => {
@@ -452,7 +495,7 @@ export default function TechPanel({ symbol, interval }: Props) {
         <div>
           <h2 className="panel-title">技术分析 · Technical Analysis</h2>
           <p className="font-mono text-lg font-bold text-slate-100">
-            {symbol} <span className="text-sm font-medium text-slate-500">· {interval} · {DAYS}d</span>
+            {symbol} <span className="text-sm font-medium text-slate-500">· {interval} · {days}d（左滑自动加载更早）</span>
             {trendNow && <span className={`ml-3 text-sm font-bold ${trendNow.cls}`}>{trendNow.text}</span>}
           </p>
         </div>

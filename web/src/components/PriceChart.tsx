@@ -17,6 +17,9 @@ interface Props {
 
 const UP = '#34d399'
 const DOWN = '#fb7185'
+const INITIAL_DAYS = 365
+/** 左滑加载的天数上限：日线20年；小时级数据源最多~4年 */
+const maxDays = (interval: string) => (interval === '1d' ? 7300 : 1460)
 
 function klineToCandle(k: Kline) {
   return {
@@ -42,6 +45,12 @@ export default function PriceChart({ symbol, interval }: Props) {
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const lastBarTimeRef = useRef<number>(0)
+  // 左滑加载更早历史
+  const [days, setDays] = useState(INITIAL_DAYS)
+  const fetchingRef = useRef(false)
+  const loadedKeyRef = useRef('')
+  const lastLenRef = useRef(0)
+  const loadMoreRef = useRef<() => void>(() => {})
 
   const [last, setLast] = useState<{ price: number; dir: 'up' | 'down' | 'flat'; tick: number }>({
     price: 0,
@@ -50,6 +59,13 @@ export default function PriceChart({ symbol, interval }: Props) {
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  loadMoreRef.current = () => {
+    if (fetchingRef.current || loading) return
+    const max = maxDays(interval)
+    if (days >= max) return
+    setDays(Math.min(days * 2, max))
+  }
 
   // Create chart once.
   useEffect(() => {
@@ -93,6 +109,11 @@ export default function PriceChart({ symbol, interval }: Props) {
       scaleMargins: { top: 0.06, bottom: 0.22 },
     })
 
+    // 左滑触底自动加载更早历史
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (range && range.from < 10) loadMoreRef.current()
+    })
+
     chartRef.current = chart
     candleRef.current = candle
     volumeRef.current = volume
@@ -104,34 +125,54 @@ export default function PriceChart({ symbol, interval }: Props) {
     }
   }, [])
 
-  // Load history when symbol/interval changes.
+  // Load history when symbol/interval/days changes; days growth = 左滑加载更早.
   useEffect(() => {
+    const key = `${symbol}|${interval}`
+    if (loadedKeyRef.current !== key && days !== INITIAL_DAYS) {
+      setDays(INITIAL_DAYS) // 换标的先重置窗口，让位给重置后的那次加载
+      return
+    }
+    const isMore = loadedKeyRef.current === key
     let cancelled = false
-    setLoading(true)
+    fetchingRef.current = true
+    setLoading(!isMore)
     setError(null)
-    lastBarTimeRef.current = 0
-    fetchKlines(symbol, interval, 365)
+    if (!isMore) lastBarTimeRef.current = 0
+    fetchKlines(symbol, interval, days)
       .then((klines) => {
         if (cancelled || !candleRef.current || !volumeRef.current) return
+        const viewRange = chartRef.current?.timeScale().getVisibleLogicalRange()
         candleRef.current.setData(klines.map(klineToCandle))
         volumeRef.current.setData(klines.map(klineToVolume))
-        chartRef.current?.timeScale().fitContent()
+        if (isMore && viewRange && klines.length > lastLenRef.current) {
+          const shift = klines.length - lastLenRef.current
+          chartRef.current
+            ?.timeScale()
+            .setVisibleLogicalRange({ from: viewRange.from + shift, to: viewRange.to + shift })
+        } else if (!isMore) {
+          chartRef.current?.timeScale().fitContent()
+        }
+        lastLenRef.current = klines.length
+        loadedKeyRef.current = key
+        fetchingRef.current = false
         const lastK = klines[klines.length - 1]
         if (lastK) {
           lastBarTimeRef.current = toUnixSec(lastK.open_time)
-          setLast({ price: lastK.close, dir: 'flat', tick: 0 })
+          if (!isMore) setLast({ price: lastK.close, dir: 'flat', tick: 0 })
         }
         setLoading(false)
       })
       .catch((e: unknown) => {
+        fetchingRef.current = false
         if (cancelled) return
         setError(e instanceof Error ? e.message : String(e))
         setLoading(false)
       })
     return () => {
       cancelled = true
+      fetchingRef.current = false
     }
-  }, [symbol, interval])
+  }, [symbol, interval, days])
 
   // Live updates over WS — only when symbol/interval match.
   useWsMessages((msg) => {
