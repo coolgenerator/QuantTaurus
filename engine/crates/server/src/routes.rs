@@ -279,6 +279,65 @@ pub async fn portfolio(State(state): State<Arc<AppState>>) -> AppResult<impl Int
     Ok(Json(p))
 }
 
+#[derive(Deserialize)]
+pub struct OptBtReq {
+    symbol: String,
+    #[serde(default = "default_days")]
+    days: i64,
+    /// 股票信号策略；缺省用该 symbol 的注册表冠军
+    #[serde(default)]
+    spec: Option<StrategySpec>,
+    #[serde(default)]
+    params: Option<crate::optbt::OptBtParams>,
+}
+
+pub async fn options_backtest(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<OptBtReq>,
+) -> AppResult<impl IntoResponse> {
+    let symbol = req.symbol.to_uppercase();
+    if qdata::is_crypto(&symbol) {
+        return Err(bad("options backtest is stocks-only"));
+    }
+    let spec = match req.spec {
+        Some(s) => s,
+        None => {
+            let champs = state.champions.lock().unwrap();
+            champs
+                .get(&crate::state::champ_key(&symbol, "1d"))
+                .and_then(|c| c.spec.clone())
+                .ok_or_else(|| bad("该标的无冠军策略，请在请求中提供 spec 或先跑进化"))?
+        }
+    };
+    let q = KlineQuery {
+        symbol: symbol.clone(),
+        interval: "1d".into(),
+        days: req.days,
+    };
+    let (klines, _) = load_klines(&state, &q).await?;
+    if klines.len() < 300 {
+        return Err(bad("not enough data"));
+    }
+    // 持有期估计与交易计划一致
+    let horizon = crate::plan::spec_horizon_days(&spec);
+    let params = req.params.unwrap_or_default();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::optbt::run(&klines, &spec, horizon, &params)
+    })
+    .await
+    .map_err(internal)?;
+    // 抽样曲线
+    let step = (result.equity.len() / 2000).max(1);
+    let equity: Vec<_> = result.equity.iter().step_by(step).collect();
+    Ok(Json(json!({
+        "metrics": result.metrics,
+        "equity": equity,
+        "trades": result.trades,
+        "total_fees_usd": result.total_fees_usd,
+        "note": result.note,
+    })))
+}
+
 pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
     // 10分钟内存缓存：板块报告要打几十个 Yahoo 请求
     {

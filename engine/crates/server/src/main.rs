@@ -9,6 +9,7 @@
 //!   GET  /api/champion
 //!   GET  /ws                实时行情 + 进化进度推送
 
+mod optbt;
 mod paper;
 mod plan;
 mod routes;
@@ -64,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/plan", get(routes::plan))
         .route("/api/search", get(routes::search))
         .route("/api/portfolio", get(routes::portfolio))
+        .route("/api/options_backtest", post(routes::options_backtest))
         .route("/ws", get(routes::ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);

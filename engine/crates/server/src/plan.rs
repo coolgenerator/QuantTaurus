@@ -58,6 +58,11 @@ fn confidence_from(holdout_sharpe: Option<f64>) -> (f64, String) {
     (score, label.to_string())
 }
 
+/// 公开包装：期权回测等模块需要同一口径的持有期估计
+pub fn spec_horizon_days(spec: &StrategySpec) -> f64 {
+    horizon_days(spec)
+}
+
 /// 策略估计持有期（交易日）：动量类 ≈ 回看期/5，回归类 ≈ 窗口/2
 fn horizon_days(spec: &StrategySpec) -> f64 {
     match spec {
