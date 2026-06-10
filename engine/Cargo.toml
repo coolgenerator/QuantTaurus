@@ -7,6 +7,7 @@ members = [
     "crates/backtest",
     "crates/strategy",
     "crates/evolve",
+    "crates/mine",
     "crates/server",
 ]
 

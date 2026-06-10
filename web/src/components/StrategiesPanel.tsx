@@ -16,6 +16,7 @@ import {
   type ChampionRecord,
   type ChampionRegistryMap,
   type CostModel,
+  type SpecKind,
   type StrategySpec,
 } from '../api'
 import { isCrypto } from './TopBar'
@@ -148,6 +149,171 @@ function LineageTimeline({ record }: { record: ChampionRecord }) {
       <span className="ml-1 font-mono text-[10px] text-slate-500">
         最新 {record.lineage[record.lineage.length - 1].holdout_sharpe.toFixed(2)}
       </span>
+    </div>
+  )
+}
+
+// ---------- strategy families (algorithm-level view) ----------
+
+interface FamilyInfo {
+  kind: SpecKind
+  /** English/code name, equals the spec kind. */
+  name: string
+  /** Chinese display name. */
+  zh: string
+  /** Factor composition. */
+  factors: string
+  /** Academic provenance. */
+  source: string
+}
+
+const FAMILIES: FamilyInfo[] = [
+  {
+    kind: 'tsmom',
+    name: 'tsmom',
+    zh: '时序动量',
+    factors: 'N日动量',
+    source: 'Moskowitz, Ooi & Pedersen (2012) Time Series Momentum',
+  },
+  {
+    kind: 'vol_managed_momentum',
+    name: 'vol_managed_momentum',
+    zh: '波动率管理动量',
+    factors: '动量 + 已实现波动率',
+    source: 'Moreira & Muir (2017)',
+  },
+  {
+    kind: 'bollinger_reversion',
+    name: 'bollinger_reversion',
+    zh: '布林均值回归',
+    factors: '价格z分',
+    source: '经典统计套利',
+  },
+  {
+    kind: 'multi_factor',
+    name: 'multi_factor',
+    zh: '多因子打分',
+    factors: '动量+资金流不平衡+波动率',
+    source: 'Cont et al. (2014) OFI 等',
+  },
+  {
+    kind: 'ensemble',
+    name: 'ensemble',
+    zh: '组合策略',
+    factors: '成员策略等权',
+    source: '模型平均/方差降低',
+  },
+]
+
+const FAMILY_FOOTNOTE =
+  '算法（因子逻辑）通用于任何标的；下方档案卡是算法×参数×标的通过三道防过拟合闸门后的验证实例。'
+
+interface FamilyInstance {
+  /** Slot key, e.g. "SPY|1d". */
+  key: string
+  /** Latest holdout sharpe from lineage; null when lineage is empty. */
+  holdoutSharpe: number | null
+}
+
+/** Aggregate champion registry instances per family kind. */
+function familyInstances(champions: ChampionRegistryMap, kind: SpecKind): FamilyInstance[] {
+  return Object.keys(champions)
+    .sort()
+    .filter((k) => champions[k].spec?.kind === kind)
+    .map((k) => {
+      const lineage = champions[k].lineage
+      const latest = lineage.length > 0 ? lineage[lineage.length - 1] : null
+      return { key: k, holdoutSharpe: latest ? latest.holdout_sharpe : null }
+    })
+}
+
+function FamilyCard({
+  family,
+  instances,
+  onJump,
+}: {
+  family: FamilyInfo
+  instances: FamilyInstance[]
+  onJump: (key: string) => void
+}) {
+  return (
+    <div className="flex flex-col rounded-xl border border-white/10 bg-black/20 p-3 transition hover:border-neon-purple/40 hover:bg-white/5">
+      {/* 家族名 + 中文名 */}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-mono text-sm font-extrabold tracking-wide text-neon-purple drop-shadow-[0_0_8px_rgba(167,139,250,0.45)]">
+          {family.name}
+        </span>
+        <span className="text-sm font-bold text-slate-100">{family.zh}</span>
+      </div>
+
+      {/* 因子构成 */}
+      <p className="mt-1.5 text-[11px] leading-snug text-slate-400">
+        <span className="text-slate-500">因子: </span>
+        <span className="font-mono text-slate-300">{family.factors}</span>
+      </p>
+
+      {/* 学术出处 */}
+      <p className="mt-0.5 text-[10px] italic leading-snug text-slate-500">{family.source}</p>
+
+      {/* 实例战绩汇总 */}
+      <div className="mt-2 border-t border-white/5 pt-2">
+        {instances.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[10px] text-slate-500">通过闸门:</span>
+            {instances.map((inst) => (
+              <button
+                key={inst.key}
+                onClick={() => onJump(inst.key)}
+                title={`点击定位到 ${inst.key} 的冠军档案卡`}
+                className="rounded-full border border-neon-green/40 bg-neon-green/10 px-2 py-0.5 font-mono text-[10px] font-bold text-neon-green transition hover:border-neon-green/80 hover:bg-neon-green/20 hover:shadow-[0_0_8px_rgba(74,222,128,0.4)]"
+              >
+                {inst.key}
+                {inst.holdoutSharpe !== null && (
+                  <span className="font-medium"> ({inst.holdoutSharpe.toFixed(2)})</span>
+                )}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="inline-block rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-500">
+            暂无通过闸门的实例
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FamilySection({
+  champions,
+  onJump,
+}: {
+  champions: ChampionRegistryMap
+  onJump: (key: string) => void
+}) {
+  return (
+    <div className="mb-4 rounded-xl border border-neon-purple/20 bg-white/[0.02] p-3">
+      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-extrabold tracking-wide text-neon-purple drop-shadow-[0_0_8px_rgba(167,139,250,0.5)]">
+          策略家族 <span className="font-mono text-[10px] font-medium text-slate-500">· 算法视角</span>
+        </h3>
+        <span className="badge border border-white/10 bg-white/5 font-mono text-slate-400">
+          {FAMILIES.length} 家族
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {FAMILIES.map((f) => (
+          <FamilyCard
+            key={f.kind}
+            family={f}
+            instances={familyInstances(champions, f.kind)}
+            onJump={onJump}
+          />
+        ))}
+      </div>
+
+      <p className="mt-2.5 text-[10px] leading-relaxed text-slate-500">{FAMILY_FOOTNOTE}</p>
     </div>
   )
 }
@@ -423,6 +589,25 @@ export default function StrategiesPanel() {
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null)
 
+  // 家族 chip → 冠军档案卡定位高亮
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const [flashKey, setFlashKey] = useState<string | null>(null)
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const jumpToCard = useCallback((key: string) => {
+    cardRefs.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setFlashKey(key)
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    flashTimerRef.current = setTimeout(() => setFlashKey(null), 1600)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    },
+    [],
+  )
+
   const load = useCallback(async () => {
     try {
       setChampions(await fetchChampions())
@@ -485,6 +670,9 @@ export default function StrategiesPanel() {
         </p>
       )}
 
+      {/* 策略家族 · 算法层视图 */}
+      <FamilySection champions={champions} onJump={jumpToCard} />
+
       {keys.length === 0 && !error && (
         <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
           暂无策略档案——启动进化晋升冠军后将自动建档
@@ -494,14 +682,25 @@ export default function StrategiesPanel() {
       {keys.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {keys.map((k) => (
-            <StrategyCard
+            <div
               key={k}
-              slotKey={k}
-              record={champions[k]}
-              active={runMeta?.key === k}
-              running={runningKey === k}
-              onRun={(days) => void runValidation(k, champions[k], days)}
-            />
+              ref={(el) => {
+                cardRefs.current[k] = el
+              }}
+              className={`rounded-xl transition-shadow duration-300 ${
+                flashKey === k
+                  ? 'ring-2 ring-neon-green/70 shadow-[0_0_24px_rgba(74,222,128,0.45)]'
+                  : ''
+              }`}
+            >
+              <StrategyCard
+                slotKey={k}
+                record={champions[k]}
+                active={runMeta?.key === k}
+                running={runningKey === k}
+                onRun={(days) => void runValidation(k, champions[k], days)}
+              />
+            </div>
           ))}
         </div>
       )}

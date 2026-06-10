@@ -730,6 +730,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "qmine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "qcore",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "qstrategy"
 version = "0.1.0"
 dependencies = [
