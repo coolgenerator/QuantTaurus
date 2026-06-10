@@ -39,6 +39,8 @@ pub enum StrategySpec {
         w_flow: f64,
         w_vol: f64,
     },
+    /// 组合策略：成员目标仓位的等权平均（方差降低，evolve 用 top-k 多样化候选构建）
+    Ensemble { members: Vec<StrategySpec> },
 }
 
 impl StrategySpec {
@@ -48,11 +50,28 @@ impl StrategySpec {
             StrategySpec::VolManagedMomentum { .. } => "vol_managed_momentum",
             StrategySpec::BollingerReversion { .. } => "bollinger_reversion",
             StrategySpec::MultiFactor { .. } => "multi_factor",
+            StrategySpec::Ensemble { .. } => "ensemble",
         }
     }
 
     /// 计算目标仓位序列（与 klines 等长，NaN 处为 0）
     pub fn signals(&self, klines: &[Kline]) -> Vec<f64> {
+        if let StrategySpec::Ensemble { members } = self {
+            let mut acc = vec![0.0f64; klines.len()];
+            if members.is_empty() {
+                return acc;
+            }
+            for m in members {
+                for (a, s) in acc.iter_mut().zip(m.signals(klines)) {
+                    *a += s;
+                }
+            }
+            let k = members.len() as f64;
+            for a in &mut acc {
+                *a /= k;
+            }
+            return acc;
+        }
         match *self {
             StrategySpec::Tsmom { lookback, deadband } => {
                 let mom = qfactors::momentum(klines, lookback);
@@ -128,6 +147,7 @@ impl StrategySpec {
                     })
                     .collect()
             }
+            StrategySpec::Ensemble { .. } => unreachable!("handled above"),
         }
     }
 
@@ -161,6 +181,15 @@ impl StrategySpec {
 
     /// 高斯扰动变异，生成子代
     pub fn mutate(&self, rng: &mut impl Rng) -> Self {
+        if let StrategySpec::Ensemble { members } = self {
+            // 变异随机一个成员
+            let mut members = members.clone();
+            if !members.is_empty() {
+                let i = rng.gen_range(0..members.len());
+                members[i] = members[i].mutate(rng);
+            }
+            return StrategySpec::Ensemble { members };
+        }
         fn jitter_usize(v: usize, lo: usize, hi: usize, rng: &mut impl Rng) -> usize {
             let f = 1.0 + rng.gen_range(-0.3..0.3f64);
             ((v as f64 * f).round() as usize).clamp(lo, hi)
@@ -206,6 +235,7 @@ impl StrategySpec {
                 w_flow: jitter(w_flow, -1.5, 1.5, rng),
                 w_vol: jitter(w_vol, -1.5, 1.5, rng),
             },
+            StrategySpec::Ensemble { .. } => unreachable!("handled above"),
         }
     }
 }

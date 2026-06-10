@@ -41,7 +41,7 @@ pub struct EvolveConfig {
 }
 
 fn default_valid_folds() -> usize {
-    3
+    5
 }
 
 impl Default for EvolveConfig {
@@ -101,34 +101,39 @@ fn eval(
 }
 
 /// 在给定K线上跑一轮完整进化，与现任冠军（如有）对决。
-/// 数据切分：[...train][valid][holdout]，holdout 在最末端。
+///
+/// 数据切分：[......散布验证折......][holdout]。这些策略没有"拟合"步骤
+/// （参数即基因组），所以无需独立训练窗——验证折直接均匀散布在整个
+/// 留出窗之前的历史上，强制候选穿越多个市场状态（牛/熊/震荡）都稳定。
+/// holdout 仍只用于最终晋升判定，从不参与搜索。
 pub fn evolve(
     klines: &[Kline],
     cfg: &EvolveConfig,
     incumbent: Option<&StrategySpec>,
 ) -> anyhow::Result<EvolveReport> {
     let n = klines.len();
-    let need = cfg.valid_bars + cfg.holdout_bars + 500;
+    let need = cfg.holdout_bars + 1000;
     anyhow::ensure!(n > need, "not enough bars: {n} <= {need}");
 
     let holdout_start = n - cfg.holdout_bars;
-    let valid_start = holdout_start - cfg.valid_bars;
-    let train_start = valid_start.saturating_sub(cfg.train_bars);
-    // 验证/留出窗回测时带上前置历史以热身指标（信号需要 lookback），
-    // 但绩效只统计窗口内：通过把窗口起点前移 lookback 上限 (250) 实现热身
+    // 搜索区域：留出窗之前最多 train_bars + valid_bars 根
+    let region_start = holdout_start.saturating_sub(cfg.train_bars + cfg.valid_bars);
+    // 回测窗带前置历史热身指标（信号需要 lookback），绩效只统计窗口内
     const WARMUP: usize = 250;
 
-    let train = &klines[train_start..valid_start];
-    let valid_w = &klines[valid_start.saturating_sub(WARMUP)..holdout_start];
+    // 整个搜索区域（展示用指标）
+    let train = &klines[region_start..holdout_start];
+    let valid_w = train;
     let holdout_w = &klines[holdout_start.saturating_sub(WARMUP)..];
 
-    // 验证区间切成 valid_folds 个不重叠折，每折带 WARMUP 前缀热身
+    // 验证折均匀散布在整个搜索区域，每折带 WARMUP 前缀热身
     let folds: Vec<&[Kline]> = {
         let nf = cfg.valid_folds.max(1);
-        let fold_len = cfg.valid_bars / nf;
+        let fold_len = (holdout_start - region_start) / nf;
+        anyhow::ensure!(fold_len > WARMUP, "folds too short: {fold_len} bars");
         (0..nf)
             .map(|i| {
-                let fs = valid_start + i * fold_len;
+                let fs = region_start + i * fold_len;
                 let fe = if i == nf - 1 { holdout_start } else { fs + fold_len };
                 &klines[fs.saturating_sub(WARMUP)..fe]
             })
@@ -193,8 +198,41 @@ pub fn evolve(
         tracing::debug!(gen, best_valid_sharpe = pop[0].valid_metrics.sharpe, "generation done");
     }
 
-    // 挑战者 = 验证集最优；在留出集上与现任冠军终极对决
-    let mut challenger = pop[0].clone();
+    // 构建 ensemble 挑战者：按适应度顺序优先选不同家族的 top-k 成员，
+    // 等权平均仓位以降低单参数点的方差
+    const ENSEMBLE_K: usize = 5;
+    let mut members: Vec<StrategySpec> = Vec::new();
+    let mut kinds_seen: Vec<&'static str> = Vec::new();
+    for c in &pop {
+        if !kinds_seen.contains(&c.spec.name()) {
+            kinds_seen.push(c.spec.name());
+            members.push(c.spec.clone());
+        }
+        if members.len() >= ENSEMBLE_K {
+            break;
+        }
+    }
+    for c in &pop {
+        if members.len() >= ENSEMBLE_K {
+            break;
+        }
+        if !members.contains(&c.spec) {
+            members.push(c.spec.clone());
+        }
+    }
+    let ensemble = make_candidate(
+        StrategySpec::Ensemble { members },
+        cfg.generations + 1,
+        None,
+        &mut evals,
+    );
+
+    // 挑战者 = 单点最优 vs ensemble，按折适应度（非留出！）取优
+    let mut challenger = if fitness(&ensemble) > fitness(&pop[0]) {
+        ensemble
+    } else {
+        pop[0].clone()
+    };
     challenger.holdout_metrics = Some(eval(&challenger.spec, holdout_w, cfg, evals));
     let challenger_ho = challenger.holdout_metrics.as_ref().unwrap().sharpe;
 
