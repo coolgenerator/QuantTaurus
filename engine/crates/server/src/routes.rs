@@ -249,8 +249,46 @@ pub async fn champion(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    const ALLOC_USD: f64 = 10_000.0; // 每槽名义资金（与 moomoo 桥接 ALLOC_USD 同口径）
     let sessions = state.paper.lock().unwrap().clone();
-    Json(json!({"active": !sessions.is_empty(), "sessions": sessions}))
+    let augmented: serde_json::Map<String, serde_json::Value> = sessions
+        .iter()
+        .map(|(k, s)| {
+            let mut v = serde_json::to_value(s).unwrap_or(json!({}));
+            // 建仓日期：当前方向的起点（最近一次从空仓/反向翻转建仓的时刻）
+            let cur_sign = s.position.signum();
+            let mut entry_ms = s.started_ms;
+            if cur_sign != 0.0 {
+                for t in s.trades.iter().rev() {
+                    let to_sign = t.to_position.signum();
+                    if to_sign != cur_sign {
+                        break; // 更早的持仓方向不同，建仓点已确定
+                    }
+                    if t.from_position.abs() < 1e-9 || t.from_position.signum() != cur_sign {
+                        entry_ms = t.time; // 从0或反向进入当前方向
+                        break;
+                    }
+                    entry_ms = t.time; // 同向加减仓，继续向前找起点
+                }
+            }
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("entry_ms".into(), json!(entry_ms));
+                obj.insert("alloc_usd".into(), json!(ALLOC_USD));
+                let shares = if s.last_price > 0.0 {
+                    s.position * ALLOC_USD * s.equity / s.last_price
+                } else {
+                    0.0
+                };
+                obj.insert("shares_equiv".into(), json!(shares));
+                obj.insert(
+                    "notional_usd".into(),
+                    json!(s.position.abs() * ALLOC_USD * s.equity),
+                );
+            }
+            (k.clone(), v)
+        })
+        .collect();
+    Json(json!({"active": !augmented.is_empty(), "sessions": augmented}))
 }
 
 #[derive(Deserialize)]

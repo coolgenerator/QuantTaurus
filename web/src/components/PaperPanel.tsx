@@ -274,7 +274,7 @@ export default function PaperPanel() {
 
       {active && session && stats && (
         <>
-          <div className="mb-3 grid grid-cols-3 gap-3">
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-xl border border-white/5 bg-black/20 p-3">
               <p className="text-[10px] uppercase tracking-widest text-slate-500">equity</p>
               <p className={`font-mono text-2xl font-bold ${equityCls}`}>
@@ -294,6 +294,39 @@ export default function PaperPanel() {
               <p className="font-mono text-2xl font-bold text-slate-200">
                 {fmtNum(stats.price, stats.price >= 1000 ? 1 : 3)}
               </p>
+            </div>
+            <div
+              className="rounded-xl border border-white/5 bg-black/20 p-3"
+              title="等效股数 = 仓位比例 × $10k 槽位名义资金 ÷ 现价；与 moomoo 模拟账户实际下单股数同口径"
+            >
+              <p className="text-[10px] uppercase tracking-widest text-slate-500">
+                等效持仓 · shares
+              </p>
+              {Number.isFinite(session.shares_equiv) ? (
+                <>
+                  <p
+                    className={`font-mono text-2xl font-bold ${
+                      session.shares_equiv > 1e-9
+                        ? 'text-neon-green'
+                        : session.shares_equiv < -1e-9
+                          ? 'text-neon-red'
+                          : 'text-slate-400'
+                    }`}
+                  >
+                    {session.shares_equiv > 0 ? '+' : ''}
+                    {session.shares_equiv.toFixed(1)} 股
+                  </p>
+                  <p className="font-mono text-xs text-slate-500">
+                    ≈$
+                    {Math.abs(session.notional_usd ?? 0).toLocaleString('en-US', {
+                      maximumFractionDigits: 0,
+                    })}{' '}
+                    名义
+                  </p>
+                </>
+              ) : (
+                <p className="font-mono text-2xl font-bold text-slate-600">—</p>
+              )}
             </div>
           </div>
 

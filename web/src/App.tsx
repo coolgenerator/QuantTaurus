@@ -4,7 +4,6 @@ import PriceChart from './components/PriceChart'
 import FactorPanel from './components/FactorPanel'
 import BacktestPanel from './components/BacktestPanel'
 import EvolvePanel from './components/EvolvePanel'
-import ChampionRegistry from './components/ChampionRegistry'
 import TradePlanPanel from './components/TradePlanPanel'
 import PortfolioPanel from './components/PortfolioPanel'
 import SectorPanel from './components/SectorPanel'
@@ -57,32 +56,36 @@ function ViewTabs({ view, onChange }: { view: View; onChange: (v: View) => void 
   )
 }
 
-/** 交易计划页大区标题：霓虹色标题 + 渐变横线分隔。 */
-function PlanSectionHeader({
-  tone,
-  title,
-  sub,
-}: {
-  tone: 'cyan' | 'purple'
-  title: string
-  sub: string
-}) {
-  const titleCls =
-    tone === 'cyan'
-      ? 'text-neon-cyan drop-shadow-[0_0_10px_rgba(34,211,238,0.55)]'
-      : 'text-neon-purple drop-shadow-[0_0_10px_rgba(167,139,250,0.55)]'
-  const lineCls =
-    tone === 'cyan'
-      ? 'bg-gradient-to-r from-neon-cyan/70 via-neon-cyan/25 to-transparent shadow-[0_0_8px_rgba(34,211,238,0.45)]'
-      : 'bg-gradient-to-r from-neon-purple/70 via-neon-purple/25 to-transparent shadow-[0_0_8px_rgba(167,139,250,0.45)]'
+/** 交易计划页二级子视图。 */
+type PlanView = 'champion' | 'universe' | 'options'
+
+const PLAN_TABS: { key: PlanView; label: string; sub: string }[] = [
+  { key: 'champion', label: '🏆 冠军计划', sub: 'Champion' },
+  { key: 'universe', label: '🌐 全池精选', sub: 'Universe' },
+  { key: 'options', label: '🎯 期权计划', sub: 'Options' },
+]
+
+/** 计划页二级胶囊导航：sticky 在顶栏下方，选中霓虹青底发光，未选中灰描边。 */
+function PlanSubNav({ planView, onChange }: { planView: PlanView; onChange: (v: PlanView) => void }) {
   return (
-    <div className="px-1">
-      <div className="flex items-baseline gap-2">
-        <h2 className={`text-lg font-extrabold tracking-wide ${titleCls}`}>{title}</h2>
-        <span className="font-mono text-xs text-slate-500">{sub}</span>
-      </div>
-      <div className={`mt-1.5 h-[2px] rounded-full ${lineCls}`} />
-    </div>
+    <nav className="sticky top-[76px] z-40 flex items-center gap-2 rounded-full border border-white/10 bg-panel/85 px-2 py-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
+      {PLAN_TABS.map((t) => {
+        const active = planView === t.key
+        return (
+          <button
+            key={t.key}
+            onClick={() => onChange(t.key)}
+            className={`rounded-full px-4 py-1.5 text-sm font-bold transition ${
+              active
+                ? 'border border-neon-cyan/60 bg-neon-cyan/15 text-neon-cyan shadow-[0_0_14px_rgba(34,211,238,0.45)] drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]'
+                : 'border border-white/10 text-slate-400 hover:border-white/25 hover:bg-white/5 hover:text-slate-200'
+            }`}
+          >
+            {t.label} <span className="text-xs font-medium opacity-70">{t.sub}</span>
+          </button>
+        )
+      })}
+    </nav>
   )
 }
 
@@ -90,6 +93,8 @@ export default function App() {
   const [symbol, setSymbol] = useState('BTCUSDT')
   const [interval, setInterval] = useState('1h')
   const [view, setView] = useState<View>('stocks')
+  // 计划页二级子视图：冠军计划（默认）/ 全池精选 / 期权计划。
+  const [planView, setPlanView] = useState<PlanView>('champion')
   // 进过一次期权页后保持挂载，避免切回时丢失已加载的链数据。
   const [optionsMounted, setOptionsMounted] = useState(false)
   // 因子 Lab 同理懒挂载：进入后保持挂载，切走时挖掘轮询/报告状态不丢失。
@@ -157,24 +162,25 @@ export default function App() {
         <TradeFeed symbol={symbol} />
       </div>
 
-      {/* 交易计划页：股票 / 期权两大区，全宽堆叠，同样隐藏而非卸载 */}
-      <div className={`flex flex-col gap-8 ${view === 'plans' ? '' : 'hidden'}`}>
-        {/* 大区一：股票交易计划 */}
-        <section className="flex flex-col gap-4">
-          <PlanSectionHeader tone="cyan" title="📈 股票交易计划" sub="Stock Trade Plans" />
-          {/* 全池视角：因子排名 Top-K 精选计划，最宏观，置于组合层之上。 */}
-          <UniversePlanPanel onSelectSymbol={selectSymbolFromPlans} />
+      {/* 交易计划页：二级胶囊导航切换三个子视图，子视图隐藏而非卸载 */}
+      <div className={`flex flex-col gap-4 ${view === 'plans' ? '' : 'hidden'}`}>
+        <PlanSubNav planView={planView} onChange={setPlanView} />
+
+        {/* 子视图一：冠军计划（组合层仓位规划 + 今日交易计划） */}
+        <section className={`flex flex-col gap-4 ${planView === 'champion' ? '' : 'hidden'}`}>
           {/* 组合层视角：当日仓位规划 + 组合风控，置于单策略计划之上。 */}
           <PortfolioPanel />
           {/* 今日交易计划：方向/仓位/反转价/倒计时，用户最关心的面板。 */}
           <TradePlanPanel onNavigateStrategies={gotoStrategies} />
-          {/* All champion slots across symbol/interval pairs. */}
-          <ChampionRegistry />
         </section>
 
-        {/* 大区二：期权交易计划（计划卡；模拟盘见「持仓」页） */}
-        <section className="flex flex-col gap-4">
-          <PlanSectionHeader tone="purple" title="🎯 期权交易计划" sub="Option Trade Plans" />
+        {/* 子视图二：全池精选（因子排名 Top-K 精选计划） */}
+        <section className={`flex flex-col gap-4 ${planView === 'universe' ? '' : 'hidden'}`}>
+          <UniversePlanPanel onSelectSymbol={selectSymbolFromPlans} />
+        </section>
+
+        {/* 子视图三：期权计划（计划卡；模拟盘见「持仓」页） */}
+        <section className={`flex flex-col gap-4 ${planView === 'options' ? '' : 'hidden'}`}>
           <OptionPlansSection onNavigateStrategies={gotoStrategies} />
         </section>
       </div>

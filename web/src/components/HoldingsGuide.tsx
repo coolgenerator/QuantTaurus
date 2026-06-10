@@ -54,6 +54,57 @@ function fmtShortDate(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
+/** "06-10 07:04" local entry time. */
+function fmtEntryTime(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** Relative time, e.g. "刚刚" / "35分钟前" / "2小时前" / "3天前". */
+function fmtRelative(ms: number, nowMs: number): string {
+  const diff = nowMs - ms
+  if (diff < 0) return ''
+  const min = Math.floor(diff / 60_000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min}分钟前`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h}小时前`
+  return `${Math.floor(h / 24)}天前`
+}
+
+/** "06-10 07:04" + relative-time subline; em-dash when missing. */
+function EntryTimeCell({ entryMs, nowMs }: { entryMs: number | undefined; nowMs: number }) {
+  if (!entryMs || !Number.isFinite(entryMs)) return <span className="text-slate-600">—</span>
+  return (
+    <div className="whitespace-nowrap">
+      <span className="text-slate-200">{fmtEntryTime(entryMs)}</span>
+      <p className="mt-0.5 text-[10px] text-slate-600">{fmtRelative(entryMs, nowMs)}</p>
+    </div>
+  )
+}
+
+/** Signed equivalent shares (long green / short red) + notional subline. */
+function SharesCell({ session }: { session: PaperSession }) {
+  const sh = session.shares_equiv
+  if (sh === undefined || !Number.isFinite(sh)) return <span className="text-slate-600">—</span>
+  const cls = sh > 1e-9 ? 'text-neon-green' : sh < -1e-9 ? 'text-neon-red' : 'text-slate-400'
+  return (
+    <div className="whitespace-nowrap">
+      <span className={`font-bold ${cls}`}>
+        {sh > 0 ? '+' : ''}
+        {sh.toFixed(1)} 股
+      </span>
+      <p className="mt-0.5 text-[10px] text-slate-600">
+        ≈{fmtUsd(Math.abs(session.notional_usd ?? 0), 0)} 名义
+      </p>
+    </div>
+  )
+}
+
+const SHARES_EQUIV_TITLE =
+  '等效股数 = 仓位比例 × $10k 槽位名义资金 ÷ 现价；与 moomoo 模拟账户实际下单股数同口径'
+
 function positionBadge(p: number): { text: string; cls: string } {
   if (p > 1e-9) {
     return {
@@ -135,9 +186,25 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
       <table className="w-full border-collapse">
         <thead>
           <tr className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
-            {['标的', '方向 · 仓位', '现价', '信号反转价', '统计目标区间', '下一决策'].map((h) => (
-              <th key={h} className="border-b border-white/10 px-2.5 py-1.5 text-left">
-                {h}
+            {(
+              [
+                { label: '标的' },
+                { label: '方向 · 仓位' },
+                { label: '持仓数量', title: SHARES_EQUIV_TITLE },
+                { label: '建仓日期' },
+                { label: '现价' },
+                { label: '信号反转价' },
+                { label: '统计目标区间' },
+                { label: '下一决策' },
+              ] as { label: string; title?: string }[]
+            ).map((h) => (
+              <th
+                key={h.label}
+                className="border-b border-white/10 px-2.5 py-1.5 text-left"
+                title={h.title}
+              >
+                {h.label}
+                {h.title && <span className="ml-0.5 cursor-help text-slate-600">ⓘ</span>}
               </th>
             ))}
           </tr>
@@ -153,6 +220,12 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
                 <td className="px-2.5 py-2 font-bold text-slate-100">{key}</td>
                 <td className="px-2.5 py-2">
                   <span className={`badge border ${badge.cls}`}>{badge.text}</span>
+                </td>
+                <td className="px-2.5 py-2" title={SHARES_EQUIV_TITLE}>
+                  <SharesCell session={session} />
+                </td>
+                <td className="px-2.5 py-2">
+                  <EntryTimeCell entryMs={session.entry_ms} nowMs={nowMs} />
                 </td>
                 <td className="px-2.5 py-2 text-slate-200">
                   {plan ? fmtNum(plan.last_close) : fmtNum(session.last_price)}
@@ -252,7 +325,7 @@ function OptionHoldingsTable({
       <table className="w-full border-collapse">
         <thead>
           <tr className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
-            {['标的', '合约', '成本 → 现价', '止盈止损进度', '目标售出日期'].map((h) => (
+            {['标的', '合约', '买入日期', '成本 → 现价', '止盈止损进度', '目标售出日期'].map((h) => (
               <th key={h} className="border-b border-white/10 px-2.5 py-1.5 text-left">
                 {h}
               </th>
@@ -276,6 +349,9 @@ function OptionHoldingsTable({
                   {fmtNum(pos.strike, pos.strike % 1 === 0 ? 0 : 2)}
                   <span className={cp === 'C' ? 'text-neon-cyan' : 'text-neon-purple'}>{cp}</span>{' '}
                   <span className="text-slate-500">{pos.expiry}</span>
+                </td>
+                <td className="px-2.5 py-2">
+                  <EntryTimeCell entryMs={pos.entry_ms} nowMs={nowMs} />
                 </td>
                 <td className="px-2.5 py-2 whitespace-nowrap">
                   <span className="text-slate-400">{fmtUsd(pos.entry_premium)}</span>

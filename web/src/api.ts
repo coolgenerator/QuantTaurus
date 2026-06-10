@@ -135,6 +135,14 @@ export interface PaperSession {
   position: number
   last_price: number
   last_bar_open: number
+  /** 当前方向的建仓时刻（ms）；0/缺失表示无仓位。 */
+  entry_ms: number
+  /** 槽位名义资金（USD，例如 10000）。 */
+  alloc_usd: number
+  /** 等效持股数（带符号）= 仓位比例 × 名义资金 × 净值 ÷ 现价。 */
+  shares_equiv: number
+  /** 当前持仓名义金额（USD）。 */
+  notional_usd: number
   curve: EquityPoint[]
   trades: PaperTrade[]
 }
