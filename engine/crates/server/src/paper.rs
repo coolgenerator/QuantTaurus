@@ -21,6 +21,10 @@ const HISTORY_BARS: i64 = 500;
 const MARK_THROTTLE_MS: i64 = 3000;
 const MAX_CURVE_POINTS: usize = 5000;
 
+fn stock_long_only() -> bool {
+    std::env::var("QHH_STOCK_LONG_ONLY").map_or(true, |v| v != "0")
+}
+
 fn cost_per_unit_turnover(symbol: &str) -> f64 {
     // 与回测同一成本模型（crate::routes::market_params）
     if qdata::is_crypto(symbol) {
@@ -197,7 +201,11 @@ async fn rebalance_one(
 
     let targets = spec.signals(&klines);
     let target = targets.last().copied().unwrap_or(0.0);
-    let target = if target.is_nan() { 0.0 } else { target.clamp(-1.0, 1.0) };
+    let mut target = if target.is_nan() { 0.0 } else { target.clamp(-1.0, 1.0) };
+    // 正股默认只多不空（QHH_STOCK_LONG_ONLY=0 可关闭）；加密不受限
+    if !qdata::is_crypto(symbol) && stock_long_only() {
+        target = target.max(0.0);
+    }
 
     let mut events: Vec<WsMessage> = Vec::new();
     {

@@ -274,8 +274,9 @@ pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("entry_ms".into(), json!(entry_ms));
                 obj.insert("alloc_usd".into(), json!(ALLOC_USD));
+                // 整数股（向零取整，与 moomoo 桥接下单口径一致）
                 let shares = if s.last_price > 0.0 {
-                    s.position * ALLOC_USD * s.equity / s.last_price
+                    (s.position * ALLOC_USD * s.equity / s.last_price).trunc()
                 } else {
                     0.0
                 };
