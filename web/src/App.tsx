@@ -14,6 +14,7 @@ import OptionsPanel from './components/OptionsPanel'
 import { OptionPlansSection, OptionsPaperSection } from './components/OptionPlansPanel'
 import HoldingsGuide from './components/HoldingsGuide'
 import StrategiesPanel from './components/StrategiesPanel'
+import UniversePlanPanel from './components/UniversePlanPanel'
 import FactorLabPanel from './components/FactorLabPanel'
 
 type View = 'stocks' | 'plans' | 'positions' | 'strategies' | 'factorlab' | 'options'
@@ -112,6 +113,15 @@ export default function App() {
     [interval],
   )
 
+  // 计划页点选标的：联动主图并切回股票分析页。
+  const selectSymbolFromPlans = useCallback(
+    (s: string) => {
+      handleSelectSymbol(s)
+      changeView('stocks')
+    },
+    [handleSelectSymbol, changeView],
+  )
+
   return (
     <div className="mx-auto flex max-w-[1500px] flex-col gap-4 p-4">
       <TopBar
@@ -152,6 +162,8 @@ export default function App() {
         {/* 大区一：股票交易计划 */}
         <section className="flex flex-col gap-4">
           <PlanSectionHeader tone="cyan" title="📈 股票交易计划" sub="Stock Trade Plans" />
+          {/* 全池视角：因子排名 Top-K 精选计划，最宏观，置于组合层之上。 */}
+          <UniversePlanPanel onSelectSymbol={selectSymbolFromPlans} />
           {/* 组合层视角：当日仓位规划 + 组合风控，置于单策略计划之上。 */}
           <PortfolioPanel />
           {/* 今日交易计划：方向/仓位/反转价/倒计时，用户最关心的面板。 */}

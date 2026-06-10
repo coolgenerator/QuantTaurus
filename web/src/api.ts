@@ -532,6 +532,66 @@ export function fetchFactorForecast(): Promise<FactorForecast> {
   return getJson('/api/factor_forecast')
 }
 
+// ---------- Universe Top-K plan (cross-sectional factor-ranked sizing) ----------
+
+/** One sized leg of the universe plan (a long or short candidate). */
+export interface UniversePlanLeg {
+  symbol: string
+  side: 'long' | 'short'
+  /** Cross-sectional composite factor score. */
+  score: number
+  /** Annualized volatility (fraction, e.g. 0.32 = 32%). */
+  vol_annual: number
+  /** Weight within its own side (longs sum to 1, shorts sum to 1). */
+  weight_in_side: number
+  /** Planned dollar allocation. */
+  dollars: number
+  /** Whole shares at last_close; 0 = a single share exceeds the allocation. */
+  shares: number
+  last_close: number
+  /** Suggested option substitute, e.g. "可用 30-45DTE delta≈0.6 CALL 替代". */
+  option_hint: string
+}
+
+export interface UniversePlan {
+  as_of: number // ms
+  horizon_days: number
+  capital_usd: number
+  longs: UniversePlanLeg[]
+  shorts: UniversePlanLeg[]
+  /** Human-readable sizing methodology, e.g. inverse-vol within side. */
+  sizing_rule: string
+  confidence: {
+    n_factors: number
+    avg_holdout_ic: number
+    note: string
+  }
+}
+
+export interface UniversePlanRequest {
+  k?: number // default 5
+  capital_usd?: number // default 10000
+  include_shorts?: boolean // default true
+}
+
+/**
+ * Build a universe-wide Top-K trade plan from the mined-factor library.
+ * Backend returns 400 with a plain-text hint when the factor library is empty,
+ * so read the body text for a usable error message instead of statusText.
+ */
+export async function fetchUniversePlan(body: UniversePlanRequest = {}): Promise<UniversePlan> {
+  const res = await fetch('/api/universe_plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = (await res.text()).trim()
+    throw new Error(text || `POST /api/universe_plan failed: ${res.status} ${res.statusText}`)
+  }
+  return res.json() as Promise<UniversePlan>
+}
+
 // ---------- WS message types ----------
 
 export interface WsKlineMsg {
