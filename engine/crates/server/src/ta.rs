@@ -70,6 +70,94 @@ fn bollinger_bands(klines: &[Kline], n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>)
     (up, mid, dn)
 }
 
+/// 摆动高/低点：vals[i] 为窗口 [i-k, i+k] 的严格最大/最小值。
+/// 返回 (highs, lows) 的下标列表；pivot 在 i+k 根 bar 后才可确认。
+fn pivots(vals: &[f64], k: usize) -> (Vec<usize>, Vec<usize>) {
+    let n = vals.len();
+    let (mut highs, mut lows) = (Vec::new(), Vec::new());
+    for i in k..n.saturating_sub(k) {
+        if !vals[i].is_finite() {
+            continue;
+        }
+        let w = &vals[i - k..=i + k];
+        if w.iter().any(|x| !x.is_finite()) {
+            continue;
+        }
+        let is_high = w.iter().enumerate().all(|(j, &x)| j == k || x < vals[i]);
+        let is_low = w.iter().enumerate().all(|(j, &x)| j == k || x > vals[i]);
+        if is_high {
+            highs.push(i);
+        }
+        if is_low {
+            lows.push(i);
+        }
+    }
+    (highs, lows)
+}
+
+/// 背离检测：相邻两个价格摆动点对比指标值。
+/// 顶背离=价新高指标不新高（sell），底背离=价新低指标不新低（buy）。
+/// 信号标在第二个 pivot 的确认 bar（pivot+k），避免"未来函数"式重绘。
+/// 返回 (确认bar下标, side, 规则名)。
+fn divergences(
+    close: &[f64],
+    ind: &[f64],
+    k: usize,
+    max_gap: usize,
+    name: &str,
+) -> Vec<(usize, &'static str, String)> {
+    let n = close.len();
+    let (highs, lows) = pivots(close, k);
+    let mut out = Vec::new();
+    for w in highs.windows(2) {
+        let (p1, p2) = (w[0], w[1]);
+        if p2 - p1 > max_gap || !ind[p1].is_finite() || !ind[p2].is_finite() {
+            continue;
+        }
+        if close[p2] > close[p1] && ind[p2] < ind[p1] && p2 + k < n {
+            out.push((p2 + k, "sell", format!("{name}顶背离")));
+        }
+    }
+    for w in lows.windows(2) {
+        let (p1, p2) = (w[0], w[1]);
+        if p2 - p1 > max_gap || !ind[p1].is_finite() || !ind[p2].is_finite() {
+            continue;
+        }
+        if close[p2] < close[p1] && ind[p2] > ind[p1] && p2 + k < n {
+            out.push((p2 + k, "buy", format!("{name}底背离")));
+        }
+    }
+    out
+}
+
+/// 神奇九转（TD Setup）：连续 9 根 close < close[4]（九买，跌势衰竭）/
+/// close > close[4]（九卖，涨势衰竭）。返回 (第9根下标, side)。
+fn td9(close: &[f64]) -> Vec<(usize, &'static str)> {
+    let mut out = Vec::new();
+    let (mut buy_cnt, mut sell_cnt) = (0u32, 0u32);
+    for i in 4..close.len() {
+        if close[i] < close[i - 4] {
+            buy_cnt += 1;
+            sell_cnt = 0;
+        } else if close[i] > close[i - 4] {
+            sell_cnt += 1;
+            buy_cnt = 0;
+        } else {
+            buy_cnt = 0;
+            sell_cnt = 0;
+        }
+        if buy_cnt == 9 {
+            out.push((i, "buy"));
+            buy_cnt = 0;
+        }
+        if sell_cnt == 9 {
+            out.push((i, "sell"));
+            sell_cnt = 0;
+        }
+    }
+    out
+}
+
 pub fn build(
     klines: &[Kline],
     champion: Option<(String, &StrategySpec)>,
@@ -102,6 +190,25 @@ pub fn build(
             }
         })
         .collect();
+
+    // 批次1新增：神奇九转 + MACD/RSI 背离，先按 bar 下标归桶再并入逐 bar 聚合
+    let mut extra_buy: std::collections::HashMap<usize, Vec<String>> = Default::default();
+    let mut extra_sell: std::collections::HashMap<usize, Vec<String>> = Default::default();
+    for (i, side) in td9(&c) {
+        let (map, rule) = if side == "buy" {
+            (&mut extra_buy, "神奇九转·九买")
+        } else {
+            (&mut extra_sell, "神奇九转·九卖")
+        };
+        map.entry(i).or_default().push(rule.to_string());
+    }
+    // k=4：pivot 两侧各4根确认；max_gap=60：背离的两个摆动点最多隔60根
+    let mut divs = divergences(&c, &dif, 4, 60, "MACD");
+    divs.extend(divergences(&c, &rsi14, 4, 60, "RSI"));
+    for (i, side, rule) in divs {
+        let map = if side == "buy" { &mut extra_buy } else { &mut extra_sell };
+        map.entry(i).or_default().push(rule);
+    }
 
     // 经典规则信号：逐 bar 收集命中规则，按 buy/sell 各聚合为一个信号
     let mut classic_signals = Vec::new();
@@ -142,6 +249,13 @@ pub fn build(
             } else if crossed_dn && kdj_d[i] > 70.0 {
                 sells.push("KDJ高位死叉".into());
             }
+        }
+
+        if let Some(extra) = extra_buy.remove(&i) {
+            buys.extend(extra);
+        }
+        if let Some(extra) = extra_sell.remove(&i) {
+            sells.extend(extra);
         }
 
         if !buys.is_empty() {
@@ -263,6 +377,30 @@ mod tests {
         assert_eq!(r.trend.len(), ks.len());
         assert!(r.classic_signals.iter().any(|s| s.side == "buy"));
         assert!(r.champion.is_none() && r.champion_signals.is_empty());
+    }
+
+    #[test]
+    fn td9_counts_nine_consecutive() {
+        // 14 根单调下跌：close[i] < close[i-4] 从 i=4 起连续成立，第 12 根（i=12）是第 9 计数
+        let closes: Vec<f64> = (0..20).map(|i| 100.0 - i as f64).collect();
+        let hits = td9(&closes);
+        assert_eq!(hits.first(), Some(&(12, "buy")));
+        // 单调上涨给出九卖
+        let closes_up: Vec<f64> = (0..20).map(|i| 100.0 + i as f64).collect();
+        assert_eq!(td9(&closes_up).first(), Some(&(12, "sell")));
+    }
+
+    #[test]
+    fn divergence_detects_lower_indicator_high() {
+        // 价格两个高点 110 → 115（创新高），指标对应 50 → 30（不创新高）→ 顶背离
+        let mut close = vec![100.0; 40];
+        let mut ind = vec![0.0; 40];
+        close[10] = 110.0;
+        close[25] = 115.0;
+        ind[10] = 50.0;
+        ind[25] = 30.0;
+        let out = divergences(&close, &ind, 4, 60, "X");
+        assert!(out.iter().any(|(i, side, r)| *i == 29 && *side == "sell" && r == "X顶背离"));
     }
 
     #[test]

@@ -317,7 +317,8 @@ export default function TechPanel({ symbol, interval }: Props) {
       </div>
 
       <p className="text-[11px] leading-snug text-slate-500">
-        经典信号为教科书口径（MACD金叉死叉 / RSI超买超卖 / 布林触轨收回 / KDJ高低位交叉），
+        经典信号为教科书口径（MACD金叉死叉 / RSI超买超卖 / 布林触轨收回 / KDJ高低位交叉 /
+        神奇九转TD9 / MACD·RSI顶底背离——背离标注在第二摆动点确认后第4根bar），
         <span className="text-amber-400/80">未经回测闸门验证，仅供参考</span>；大箭头 =
         同日多规则共振。◉ 冠军信号来自 evolve 闸门验证过的策略实际翻仓点。底部色带 =
         趋势（价格与MA50相对MA200位置）。
