@@ -181,7 +181,23 @@ pub fn compute_metrics(
     let kurt = central_moment(rets, mean_r, sd, 4);
     let dsr = deflated_sharpe_prob(sharpe / bars_per_year.sqrt(), n as usize, skew, kurt, num_trials);
 
+    let active: Vec<f64> = rets.iter().copied().filter(|r| r.abs() > 1e-12).collect();
+    let hit_rate = if active.is_empty() {
+        0.0
+    } else {
+        active.iter().filter(|r| **r > 0.0).count() as f64 / active.len() as f64
+    };
+    let gross_win: f64 = rets.iter().filter(|r| **r > 0.0).sum();
+    let gross_loss: f64 = -rets.iter().filter(|r| **r < 0.0).sum::<f64>();
+    let profit_factor = if gross_loss > 1e-12 {
+        gross_win / gross_loss
+    } else {
+        0.0
+    };
+
     Metrics {
+        hit_rate,
+        profit_factor,
         total_return,
         annual_return,
         annual_vol,

@@ -113,6 +113,12 @@ pub struct Metrics {
     pub num_trades: u64,
     /// Bailey & López de Prado (2014) 校正多重测试后的 Sharpe 显著性概率
     pub deflated_sharpe_prob: f64,
+    /// bar级方向命中率：持仓bar中策略收益>0的占比（预测准确度）
+    #[serde(default)]
+    pub hit_rate: f64,
+    /// 盈亏比：毛利合计 / 毛损合计
+    #[serde(default)]
+    pub profit_factor: f64,
 }
 
 /// 一次回测的资金曲线点
