@@ -41,9 +41,24 @@
 - [x] P12 美股盘中报价轮询（15s，仅模拟盘股票，盘外静默）
 - [x] P13a 热门个股实验：NVDA(holdout 0.37/DSR 0.94)、MU ensemble(2.24)、
       AMD(1.48) 全部晋升 → 注册表 6 冠军并行模拟盘
+- [x] P15 moomoo 集成（用户要求）：成本模型 moomoo 口径、OpenD 已安装登录、
+      下单桥接器 bridge/moomoo_bridge.py（待用户 dry-run 验证）
+- [x] P16 模拟盘持久化（重启不清零，已实测）+ Market Feed 标题澄清
+- [x] P17 期权分析（用户要求）：bridge/options_service.py（OpenD期权链+
+      PCR/MaxPain/ATM IV/25Δ偏度，8788端口，120s缓存）+ 前端期权Tab
+      （IV微笑/OI分布/T型报价）+ 顶层Tab导航
+- [x] P18 短线成本回测：CostModel min_fee_usd/capital_usd + 前端成本预设
 - [ ] P13b 打磨：lint 基线清理、回测报告导出
-- [ ] P14 可选：VIX regime 过滤因子、基本面数据（FRED宏观）接入、
-      SectorPanel 加「一键对热点板块成分股跑进化」按钮
+- [ ] P14 可选：VIX regime 过滤因子、SectorPanel 一键进化按钮、
+      期权服务 launchd 自启、期权策略回测引擎（大工程，需单独设计）
+
+## 运行中的进程清单（重启机器后需手动拉起，或装 launchd）
+
+- engine/target/release/server（:8787）
+- web: npm run dev（:5174）
+- bridge/options_service.py（:8788，需 OpenD 已登录）
+- /Applications/moomoo_OpenD.app（:11111，需手动登录）
+- bridge/moomoo_bridge.py（可选，同步 moomoo 模拟盘）
 
 ## 当前进度备注
 
