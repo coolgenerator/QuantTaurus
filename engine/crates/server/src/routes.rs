@@ -399,7 +399,12 @@ pub async fn factor_forecast(State(state): State<Arc<AppState>>) -> AppResult<im
     })
     .await
     .map_err(internal)?;
-    let t = panel.n_dates() - 1;
+    // 最新日期可能只有部分标的有bar（盘前/数据时差），向前找覆盖足够的横截面
+    let mut t = panel.n_dates() - 1;
+    let count_at = |t: usize| (0..panel.n_symbols()).filter(|s| z[*s][t].is_finite()).count();
+    while t > 0 && count_at(t) < 10 {
+        t -= 1;
+    }
     let mut scores: Vec<(String, f64)> = panel
         .symbols
         .iter()
