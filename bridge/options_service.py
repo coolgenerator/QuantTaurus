@@ -46,8 +46,13 @@ PAPER_CASH0 = 10_000.0
 PREMIUM_BUDGET = 1_000.0     # 每标的权利金预算（期权账户 10% —— 期权可归零，严格限额）
 MAX_SINGLE_PREMIUM = 2_000.0 # 单张权利金超过此值的合约不买（如 MU 深度高价合约）
 FEE_PER_CONTRACT = 0.65  # 保守按 $0.65/张（监管+平台费上限）
-CLOSE_DTE = 7            # 距到期≤7天无条件平仓
-TP_PCT, SL_PCT = 1.00, -0.50  # 权利金 +100% 止盈 / -50% 止损
+# 退出规则参数（可用环境变量覆盖，不再写死）
+CLOSE_DTE = int(os.environ.get("QHH_OPT_CLOSE_DTE", "7"))      # 距到期≤N天无条件平仓
+TP_PCT = float(os.environ.get("QHH_OPT_TP", "1.00"))           # 权利金止盈
+SL_PCT = float(os.environ.get("QHH_OPT_SL", "-0.50"))          # 权利金止损（基准）
+# IV 自适应止损：合约 IV 高于此阈值时止损放宽 1.2 倍（高IV合约权利金波动大，
+# 固定-50%容易被噪声打掉），低于一半阈值时收紧到 0.8 倍
+IV_WIDE_THRESHOLD = float(os.environ.get("QHH_OPT_IV_WIDE", "60"))
 PAPER_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "engine", "data", "options_paper.json"
 )
@@ -351,12 +356,13 @@ def paper_tick() -> None:
             pnl_pct = (last / pos["entry_premium"] - 1.0) if pos["entry_premium"] > 0 else 0.0
             plan_now = plan_by_underlying.get(und)
             reason = None
+            sl_eff = effective_sl(pos)
             if dte(pos["expiry"]) <= CLOSE_DTE:
                 reason = f"距到期≤{CLOSE_DTE}天"
             elif pnl_pct >= TP_PCT:
-                reason = "止盈+100%"
-            elif pnl_pct <= SL_PCT:
-                reason = "止损-50%"
+                reason = f"止盈{TP_PCT:+.0%}"
+            elif pnl_pct <= sl_eff:
+                reason = f"止损{sl_eff:+.0%}(IV自适应)"
             elif plan_now is None or (plan_now["stock_target"] > 0) != (pos["direction"] > 0):
                 reason = "股票信号反转/消失"
             if reason:
@@ -385,6 +391,7 @@ def paper_tick() -> None:
                 "cost_basis": cost, "entry_ms": int(time.time() * 1000),
                 "expiry": plan["expiry"], "strike": plan["strike"],
                 "action": plan["action"], "rationale": plan["rationale"],
+                "iv_at_entry": plan.get("iv"), "delta_at_entry": plan.get("delta"),
             }
             st["trades"].append({
                 "time": int(time.time() * 1000), "side": "BUY", "code": plan["code"],
@@ -400,9 +407,54 @@ def paper_tick() -> None:
         _paper_save(st)
 
 
+def effective_sl(pos: dict) -> float:
+    """IV 自适应止损：高IV合约权利金噪声大放宽，低IV收紧"""
+    iv = pos.get("iv_at_entry")
+    if iv is None:
+        return SL_PCT
+    if iv >= IV_WIDE_THRESHOLD:
+        return SL_PCT * 1.2
+    if iv <= IV_WIDE_THRESHOLD / 2:
+        return SL_PCT * 0.8
+    return SL_PCT
+
+
+def _stock_plans_by_symbol() -> dict:
+    try:
+        return {p["symbol"]: p for p in fetch_stock_plans()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def paper_state() -> dict:
     with _paper_lock:
-        return _paper_load()
+        st = _paper_load()
+    # 动态退出参数（读取时实时计算，不落盘）
+    plans = _stock_plans_by_symbol()
+    for und, pos in st.get("positions", {}).items():
+        sl = effective_sl(pos)
+        entry = pos["entry_premium"]
+        sp = plans.get(und) or {}
+        horizon = sp.get("horizon_days") or 10
+        # 动态预计售出 = min(到期-CLOSE_DTE, 建仓 + 信号持有期×1.5)
+        y, m_, d_ = map(int, pos["expiry"].split("-"))
+        hard_close = time.mktime((y, m_, d_, 0, 0, 0, 0, 0, -1)) * 1000 - CLOSE_DTE * 86_400_000
+        signal_exit = pos["entry_ms"] + int(horizon * 1.5) * 86_400_000
+        pos["exit_dynamic"] = {
+            "tp_premium": entry * (1 + TP_PCT),
+            "sl_premium": entry * (1 + sl),
+            "sl_pct_effective": sl,
+            "iv_adaptive": pos.get("iv_at_entry") is not None,
+            "underlying_flip_price": sp.get("flip_price"),
+            "underlying_last": sp.get("last_close"),
+            "planned_exit_ms": int(min(hard_close, signal_exit)),
+            "hard_close_ms": int(hard_close),
+            "rules_note": (
+                f"止盈{TP_PCT:+.0%} / 止损{sl:+.0%}(IV自适应) / "
+                f"标的跌穿反转价平仓 / 到期前{CLOSE_DTE}天强平 —— 参数可经环境变量调整"
+            ),
+        }
+    return st
 
 
 def paper_loop() -> None:
