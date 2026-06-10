@@ -20,8 +20,18 @@ interface Props {
 const UP = '#34d399'
 const DOWN = '#fb7185'
 const INITIAL_DAYS = 730 // MA200 需要足够暖机 bar
-/** 左滑加载的天数上限：日线20年；小时级数据源最多~4年 */
-const maxDays = (interval: string) => (interval === '1d' ? 7300 : 1460)
+/** 左滑加载的天数上限（数据源历史深度）：日/周/月线20年；1h约2年；5m/30m约60天；1m约7天 */
+const maxDays = (iv: string) =>
+  iv === '1d' || iv === '1w' || iv === '1mo'
+    ? 7300
+    : iv === '1m'
+      ? 7
+      : iv === '5m' || iv === '30m'
+        ? 59
+        : 1460
+/** 初始窗口：周/月线直接拉满20年（bar数少），其余取默认与上限的较小值 */
+const initialDays = (iv: string, base: number) =>
+  iv === '1w' || iv === '1mo' ? 7300 : Math.min(base, maxDays(iv))
 
 const CHART_OPTS = {
   layout: {
@@ -154,7 +164,7 @@ function DistCard({ title, d, cls }: { title: string; d: DistStat; cls: string }
             胜率 {(d.win10 * 100).toFixed(1)}% · 中位 {(d.med10 * 100).toFixed(2)}%
           </span>
         </p>
-        <p className="text-[10px] text-slate-500">n = {d.n.toLocaleString()}（10日符号化收益）</p>
+        <p className="text-[10px] text-slate-500">n = {d.n.toLocaleString()}（10bar符号化收益）</p>
       </div>
       <HistThumb hist={d.hist} big />
     </div>
@@ -204,7 +214,7 @@ export default function TechPanel({ symbol, interval }: Props) {
   const taRef = useRef<TaResponse | null>(null)
   const sigMapRef = useRef<Map<number, BarSignal[]>>(new Map())
 
-  const [days, setDays] = useState(INITIAL_DAYS)
+  const [days, setDays] = useState(() => initialDays(interval, INITIAL_DAYS))
   // 左滑加载更多：防重入 + 记录上次成功加载的 symbol|interval（区分"加载更早"与"换标的"）
   const fetchingRef = useRef(false)
   const loadedKeyRef = useRef('')
@@ -357,8 +367,9 @@ export default function TechPanel({ symbol, interval }: Props) {
   useEffect(() => {
     const key = `${symbol}|${interval}`
     // 换标的/周期：先把窗口重置回初始值（本次effect让位给重置后的那次）
-    if (loadedKeyRef.current !== key && days !== INITIAL_DAYS) {
-      setDays(INITIAL_DAYS)
+    const init = initialDays(interval, INITIAL_DAYS)
+    if (loadedKeyRef.current !== key && days !== init) {
+      setDays(init)
       return
     }
     const isMore = loadedKeyRef.current === key
@@ -461,20 +472,27 @@ export default function TechPanel({ symbol, interval }: Props) {
     seriesRef.current.ema26?.applyOptions({ visible: showEma })
   }, [showEma])
 
-  // 规则历史统计：全宇宙一份，挂载时拉取（服务端6h缓存，首算~10s）
+  // 规则历史统计：按当前周期计算（服务端按周期缓存6h，每周期首算~10s）
+  const [statsErr, setStatsErr] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
-    fetchTaStats()
+    setStats(null)
+    setStatsErr(null)
+    statsRef.current = new Map()
+    fetchTaStats(interval)
       .then((s) => {
         if (cancelled) return
         statsRef.current = new Map(s.rules.map((r) => [r.rule, r]))
         setStats(s)
       })
-      .catch(() => {})
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setStatsErr(e instanceof Error ? e.message : String(e))
+      })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [interval])
 
   // 当前标的的规则级统计映射（tooltip 的"本标的"行）
   useEffect(() => {
@@ -599,7 +617,7 @@ export default function TechPanel({ symbol, interval }: Props) {
             规则统计 · Rule Stats{' '}
             {stats && (
               <span className="normal-case tracking-normal">
-                （{stats.symbols}标的 · {(stats.events / 1000).toFixed(0)}k 信号事件 · {stats.years}年日线）
+                （{stats.symbols}标的 · {(stats.events / 1000).toFixed(1)}k 事件 · {stats.interval}）
               </span>
             )}
           </p>
@@ -623,15 +641,19 @@ export default function TechPanel({ symbol, interval }: Props) {
           </div>
         </div>
         <p className="mb-1 text-[11px] leading-snug text-slate-500">
-          口径：信号后10个交易日的符号化收益（卖出信号=做空视角，跌了才算赢）；止盈日 =
-          20日内收益峰值出现日的均值；直方图 = 10日收益分布（红≤0 / 绿&gt;0，±2.5%分箱）。
+          口径：信号后10根bar的符号化收益（卖出信号=做空视角，跌了才算赢）；止盈 =
+          20根bar内收益峰值出现位置的均值；直方图 = 10bar收益分布（红≤0 / 绿&gt;0，±2.5%分箱）。
+          统计窗口随周期变化{stats ? `（当前 ${stats.interval} · ${stats.window_days}天 · ${stats.symbols}标的）` : ''}，
+          盘中粒度受数据源限制（1m≈7天、5m/30m≈60天、1h≈2年），样本少时仅供参考。
           <span className="text-amber-400/80">
             同一规则在不同个股上期望差异巨大（如九买：PLTR +7.7% vs COIN -0.9%），
             全体均值仅是先验，请结合"当前标的"档查看；样本跨标的同期相关且窗口重叠，仅供参考。
           </span>
         </p>
-        {!stats ? (
-          <p className="py-3 text-center text-xs text-slate-500">统计计算中（首次约10秒）…</p>
+        {statsErr ? (
+          <p className="py-3 text-center text-xs text-amber-400/80">该周期暂无统计：{statsErr}</p>
+        ) : !stats ? (
+          <p className="py-3 text-center text-xs text-slate-500">统计计算中（每周期首次约10秒）…</p>
         ) : (
           <>
             {/* 总概率分布卡片：全宇宙或当前标的的买/卖两方向 */}

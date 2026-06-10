@@ -156,7 +156,7 @@ export default function App() {
   const handleSelectSymbol = useCallback(
     (s: string) => {
       setSymbol(s)
-      if (!isCrypto(s) && interval === '4h') setInterval('1d')
+      if (!isCrypto(s) && (interval === '4h' || interval === '2h')) setInterval('1d')
     },
     [interval],
   )

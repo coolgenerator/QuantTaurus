@@ -34,9 +34,13 @@ pub enum Interval {
     M1,
     M5,
     M15,
+    M30,
     H1,
+    H2,
     H4,
     D1,
+    W1,
+    Mon1,
 }
 
 impl Interval {
@@ -45,9 +49,13 @@ impl Interval {
             Interval::M1 => "1m",
             Interval::M5 => "5m",
             Interval::M15 => "15m",
+            Interval::M30 => "30m",
             Interval::H1 => "1h",
+            Interval::H2 => "2h",
             Interval::H4 => "4h",
             Interval::D1 => "1d",
+            Interval::W1 => "1w",
+            Interval::Mon1 => "1M",
         }
     }
     pub fn millis(&self) -> i64 {
@@ -55,9 +63,14 @@ impl Interval {
             Interval::M1 => 60_000,
             Interval::M5 => 300_000,
             Interval::M15 => 900_000,
+            Interval::M30 => 1_800_000,
             Interval::H1 => 3_600_000,
+            Interval::H2 => 7_200_000,
             Interval::H4 => 14_400_000,
             Interval::D1 => 86_400_000,
+            Interval::W1 => 7 * 86_400_000,
+            // 月线无固定长度，取30天近似（仅用于缓存步长/年化推算）
+            Interval::Mon1 => 30 * 86_400_000,
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -65,9 +78,13 @@ impl Interval {
             "1m" => Some(Interval::M1),
             "5m" => Some(Interval::M5),
             "15m" => Some(Interval::M15),
+            "30m" => Some(Interval::M30),
             "1h" => Some(Interval::H1),
+            "2h" => Some(Interval::H2),
             "4h" => Some(Interval::H4),
             "1d" => Some(Interval::D1),
+            "1w" | "1wk" => Some(Interval::W1),
+            "1M" | "1mo" | "1mon" => Some(Interval::Mon1),
             _ => None,
         }
     }

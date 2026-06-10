@@ -85,8 +85,8 @@ pub struct AppState {
     pub paper: Mutex<HashMap<String, crate::paper::PaperSession>>,
     /// 板块报告缓存：(生成时间ms, 序列化结果)
     pub sector_cache: Mutex<Option<(i64, serde_json::Value)>>,
-    /// 技术规则历史统计缓存：(生成时间ms, 序列化结果)
-    pub ta_stats_cache: Mutex<Option<(i64, serde_json::Value)>>,
+    /// 技术规则历史统计缓存：interval → (生成时间ms, 序列化结果)
+    pub ta_stats_cache: Mutex<HashMap<String, (i64, serde_json::Value)>>,
     pub paper_path: PathBuf,
     /// 因子挖掘任务状态与因子库
     pub mine_status: Mutex<crate::mine_job::MineStatus>,
@@ -128,7 +128,7 @@ impl AppState {
             champion_path,
             paper: Mutex::new(paper),
             sector_cache: Mutex::new(None),
-            ta_stats_cache: Mutex::new(None),
+            ta_stats_cache: Mutex::new(HashMap::new()),
             paper_path,
             mine_status: Mutex::new(crate::mine_job::MineStatus::Idle),
             factor_lib_path: PathBuf::from(data_dir).join("factors.json"),

@@ -252,7 +252,8 @@ export interface TaStatsResponse {
   computed_ms: number
   symbols: number
   events: number
-  years: number
+  interval: string
+  window_days: number
   horizon: number
   headline: number
   bin_edges: number[]
@@ -265,9 +266,9 @@ export interface TaStatsResponse {
   symbol_rules: SymbolRuleStat[]
 }
 
-/** First call computes over the full universe (~10s); cached 6h server-side after. */
-export function fetchTaStats(): Promise<TaStatsResponse> {
-  return getJson('/api/ta/stats')
+/** Per-interval stats; first call per interval computes over the full universe (~10s), cached 6h. */
+export function fetchTaStats(interval = '1d'): Promise<TaStatsResponse> {
+  return getJson(`/api/ta/stats?interval=${interval}`)
 }
 
 // ---------- Trade plans ----------

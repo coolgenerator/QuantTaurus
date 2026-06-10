@@ -48,9 +48,13 @@ pub fn market_params(symbol: &str, interval: Interval) -> (f64, CostModel) {
         )
     } else {
         let bars_per_trading_day = match interval {
+            Interval::Mon1 => 1.0 / 21.0,
+            Interval::W1 => 0.2,
             Interval::D1 => 1.0,
             Interval::H4 => 1.625,
+            Interval::H2 => 3.25,
             Interval::H1 => 6.5,
+            Interval::M30 => 13.0,
             Interval::M15 => 26.0,
             Interval::M5 => 78.0,
             Interval::M1 => 390.0,
@@ -714,19 +718,35 @@ pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoR
     Ok(Json(val))
 }
 
-/// 技术规则历史统计：52标的×10年日线，6小时缓存（首次计算可能拉数据，秒级~分钟级）
-pub async fn ta_stats(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+#[derive(Deserialize)]
+pub struct TaStatsQuery {
+    #[serde(default = "default_stats_interval")]
+    interval: String,
+}
+fn default_stats_interval() -> String {
+    "1d".into()
+}
+
+/// 技术规则历史统计：52标的全历史，按周期分别计算并缓存6小时
+pub async fn ta_stats(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TaStatsQuery>,
+) -> AppResult<impl IntoResponse> {
     {
         let cache = state.ta_stats_cache.lock().unwrap();
-        if let Some((ts, val)) = cache.as_ref() {
+        if let Some((ts, val)) = cache.get(&q.interval) {
             if now_ms() - ts < crate::ta_stats::CACHE_TTL_MS {
                 return Ok(Json(val.clone()));
             }
         }
     }
-    let report = crate::ta_stats::compute(&state).await.map_err(internal)?;
+    let report = crate::ta_stats::compute(&state, &q.interval).await.map_err(bad)?;
     let val = serde_json::to_value(&report).map_err(internal)?;
-    *state.ta_stats_cache.lock().unwrap() = Some((now_ms(), val.clone()));
+    state
+        .ta_stats_cache
+        .lock()
+        .unwrap()
+        .insert(q.interval.clone(), (now_ms(), val.clone()));
     Ok(Json(val))
 }
 

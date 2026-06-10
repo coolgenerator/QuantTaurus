@@ -22,8 +22,16 @@ pub const UNIVERSE: &[&str] = &[
     "TSM", "TXN", "UBER", "VRT", "VST", "WDC",
 ];
 
-/// 回测窗口：20 年（晚上市的标的自然只有上市后数据）
-pub const YEARS: i64 = 20;
+/// 每个周期的回测窗口天数（受数据源历史深度限制：Yahoo 1m≈7天、5m/30m≈60天、1h≈2年）
+pub fn window_days(interval: &str) -> i64 {
+    match interval {
+        "1d" | "1w" | "1wk" | "1mo" | "1M" | "1mon" => 7300, // 20年
+        "1h" => 729,
+        "30m" | "15m" | "5m" => 59,
+        "1m" => 7,
+        _ => 729,
+    }
+}
 /// 前向观察窗（交易日）与头条统计日
 pub const HORIZON: usize = 20;
 pub const HEADLINE: usize = 10;
@@ -87,7 +95,8 @@ pub struct TaStatsResponse {
     pub computed_ms: i64,
     pub symbols: usize,
     pub events: usize,
-    pub years: i64,
+    pub interval: String,
+    pub window_days: i64,
     pub horizon: usize,
     pub headline: usize,
     pub bin_edges: &'static [f64],
@@ -149,10 +158,16 @@ impl Acc {
 }
 
 /// 全宇宙跑信号 + 三级聚合。数据已在本地缓存时纯 CPU。
-pub async fn compute(state: &AppState) -> anyhow::Result<TaStatsResponse> {
-    let interval = Interval::parse("1d").expect("1d valid");
+pub async fn compute(state: &AppState, interval_str: &str) -> anyhow::Result<TaStatsResponse> {
+    let interval = Interval::parse(interval_str)
+        .ok_or_else(|| anyhow::anyhow!("bad interval {interval_str}"))?;
+    anyhow::ensure!(
+        !matches!(interval, Interval::H2 | Interval::H4),
+        "股票数据源不支持 2h/4h 周期的统计"
+    );
+    let days = window_days(interval_str);
     let end = now_ms();
-    let start = end - YEARS * 365 * 86_400_000;
+    let start = end - days * 86_400_000;
 
     let mut rule_acc: HashMap<String, Acc> = Default::default();
     let mut sym_rule_acc: HashMap<(String, String), Acc> = Default::default();
@@ -163,7 +178,8 @@ pub async fn compute(state: &AppState) -> anyhow::Result<TaStatsResponse> {
 
     for sym in UNIVERSE {
         let ks = match state.store.get(sym, interval, start, end).await {
-            Ok(v) if v.len() > 250 => v,
+            // 月线20年也只有~240根，门槛放宽到60根（HORIZON 之外还得有样本）
+            Ok(v) if v.len() > 60 => v,
             _ => continue, // 数据缺失的标的直接跳过
         };
         symbols_ok += 1;
@@ -276,7 +292,8 @@ pub async fn compute(state: &AppState) -> anyhow::Result<TaStatsResponse> {
         computed_ms: now_ms(),
         symbols: symbols_ok,
         events,
-        years: YEARS,
+        interval: interval_str.to_string(),
+        window_days: days,
         horizon: HORIZON,
         headline: HEADLINE,
         bin_edges: BIN_EDGES,

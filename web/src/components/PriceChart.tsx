@@ -18,8 +18,18 @@ interface Props {
 const UP = '#34d399'
 const DOWN = '#fb7185'
 const INITIAL_DAYS = 365
-/** 左滑加载的天数上限：日线20年；小时级数据源最多~4年 */
-const maxDays = (interval: string) => (interval === '1d' ? 7300 : 1460)
+/** 左滑加载的天数上限（数据源历史深度）：日/周/月线20年；1h约2年；5m/30m约60天；1m约7天 */
+const maxDays = (iv: string) =>
+  iv === '1d' || iv === '1w' || iv === '1mo'
+    ? 7300
+    : iv === '1m'
+      ? 7
+      : iv === '5m' || iv === '30m'
+        ? 59
+        : 1460
+/** 初始窗口：周/月线直接拉满20年（bar数少），其余取默认与上限的较小值 */
+const initialDays = (iv: string, base: number) =>
+  iv === '1w' || iv === '1mo' ? 7300 : Math.min(base, maxDays(iv))
 
 function klineToCandle(k: Kline) {
   return {
@@ -46,7 +56,7 @@ export default function PriceChart({ symbol, interval }: Props) {
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const lastBarTimeRef = useRef<number>(0)
   // 左滑加载更早历史
-  const [days, setDays] = useState(INITIAL_DAYS)
+  const [days, setDays] = useState(() => initialDays(interval, INITIAL_DAYS))
   const fetchingRef = useRef(false)
   const loadedKeyRef = useRef('')
   const lastLenRef = useRef(0)
@@ -128,8 +138,9 @@ export default function PriceChart({ symbol, interval }: Props) {
   // Load history when symbol/interval/days changes; days growth = 左滑加载更早.
   useEffect(() => {
     const key = `${symbol}|${interval}`
-    if (loadedKeyRef.current !== key && days !== INITIAL_DAYS) {
-      setDays(INITIAL_DAYS) // 换标的先重置窗口，让位给重置后的那次加载
+    const init = initialDays(interval, INITIAL_DAYS)
+    if (loadedKeyRef.current !== key && days !== init) {
+      setDays(init) // 换标的/周期先重置窗口，让位给重置后的那次加载
       return
     }
     const isMore = loadedKeyRef.current === key

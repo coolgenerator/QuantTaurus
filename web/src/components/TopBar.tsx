@@ -12,11 +12,12 @@ export const SYMBOL_GROUPS = {
   'AI 电力': ['VST', 'CEG', 'GEV'],
   Crypto: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
 } as const
-export const INTERVALS = ['1h', '4h', '1d'] as const
+export const INTERVALS = ['1m', '5m', '30m', '1h', '2h', '4h', '1d', '1w', '1mo'] as const
 
 export const isCrypto = (s: string) => s.endsWith('USDT')
-/** 股票数据源 (Yahoo) 不支持 4h */
-export const intervalsFor = (s: string) => (isCrypto(s) ? INTERVALS : (['1h', '1d'] as const))
+/** 股票数据源 (Yahoo) 不支持 2h/4h；盘中粒度历史有限（1m≈7天、5m/30m≈60天、1h≈2年） */
+export const intervalsFor = (s: string) =>
+  isCrypto(s) ? INTERVALS : (['1m', '5m', '30m', '1h', '1d', '1w', '1mo'] as const)
 
 const QUOTE_TYPE_STYLE: Record<SearchHit['quote_type'], string> = {
   EQUITY: 'border-cyan-400/40 text-cyan-300',
