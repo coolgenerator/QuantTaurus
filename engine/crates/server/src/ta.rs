@@ -158,6 +158,86 @@ fn td9(close: &[f64]) -> Vec<(usize, &'static str)> {
     out
 }
 
+/// 批次3：K线形态族。反转形态要求趋势背景（昨收 vs MA20）才标注，教科书口径。
+/// 返回 (bar下标, side, 规则名)。
+fn candle_patterns(klines: &[Kline], ma20: &[f64]) -> Vec<(usize, &'static str, String)> {
+    let n = klines.len();
+    let mut out = Vec::new();
+    let body = |k: &Kline| (k.close - k.open).abs();
+    let range = |k: &Kline| (k.high - k.low).max(1e-12);
+    let upper = |k: &Kline| k.high - k.close.max(k.open);
+    let lower = |k: &Kline| k.close.min(k.open) - k.low;
+    let bull = |k: &Kline| k.close > k.open;
+    let bear = |k: &Kline| k.close < k.open;
+
+    for i in 6..n {
+        if !ma20[i - 1].is_finite() {
+            continue;
+        }
+        let (k0, k1, k2) = (&klines[i], &klines[i - 1], &klines[i - 2]);
+        // 趋势背景：昨收相对 MA20
+        let down_ctx = k1.close < ma20[i - 1];
+        let up_ctx = k1.close > ma20[i - 1];
+
+        // 吞没形态：实体包住前一根实体，且方向反转
+        if bear(k1) && bull(k0) && k0.open <= k1.close && k0.close >= k1.open && down_ctx {
+            out.push((i, "buy", "看涨吞没".to_string()));
+        } else if bull(k1) && bear(k0) && k0.open >= k1.close && k0.close <= k1.open && up_ctx {
+            out.push((i, "sell", "看跌吞没".to_string()));
+        }
+
+        // 锤子/上吊：长下影≥2×实体，上影很短，实体占比小
+        let hammer_shape =
+            lower(k0) >= 2.0 * body(k0) && upper(k0) <= 0.3 * body(k0).max(1e-12) && body(k0) <= 0.35 * range(k0);
+        if hammer_shape && down_ctx {
+            out.push((i, "buy", "锤子线".to_string()));
+        } else if hammer_shape && up_ctx {
+            out.push((i, "sell", "上吊线".to_string()));
+        }
+        // 流星/倒锤：长上影≥2×实体，下影很短
+        let star_shape =
+            upper(k0) >= 2.0 * body(k0) && lower(k0) <= 0.3 * body(k0).max(1e-12) && body(k0) <= 0.35 * range(k0);
+        if star_shape && up_ctx {
+            out.push((i, "sell", "流星线".to_string()));
+        } else if star_shape && down_ctx {
+            out.push((i, "buy", "倒锤线".to_string()));
+        }
+
+        // 启明星/黄昏星（三根）：大实体 → 小实体 → 反向大实体收复过半
+        let small_mid = body(k1) < 0.3 * body(k2).max(1e-12);
+        if bear(k2) && small_mid && bull(k0) && k0.close > (k2.open + k2.close) / 2.0 && down_ctx {
+            out.push((i, "buy", "启明星".to_string()));
+        } else if bull(k2) && small_mid && bear(k0) && k0.close < (k2.open + k2.close) / 2.0 && up_ctx {
+            out.push((i, "sell", "黄昏星".to_string()));
+        }
+
+        // 红三兵/三只乌鸦：连续三根同向、收盘递进、实体占比≥50%
+        let solid = |k: &Kline| body(k) >= 0.5 * range(k);
+        if bull(k0) && bull(k1) && bull(k2)
+            && k0.close > k1.close && k1.close > k2.close
+            && solid(k0) && solid(k1) && solid(k2) && down_ctx
+        {
+            out.push((i, "buy", "红三兵".to_string()));
+        } else if bear(k0) && bear(k1) && bear(k2)
+            && k0.close < k1.close && k1.close < k2.close
+            && solid(k0) && solid(k1) && solid(k2) && up_ctx
+        {
+            out.push((i, "sell", "三只乌鸦".to_string()));
+        }
+
+        // 趋势末端十字星：实体≤10%振幅，且前5根累计涨跌超3%（变盘警示）
+        let ret5 = k1.close / klines[i - 6].close - 1.0;
+        if body(k0) <= 0.1 * range(k0) && ret5.abs() > 0.03 {
+            if ret5 > 0.0 {
+                out.push((i, "sell", "高位十字星".to_string()));
+            } else {
+                out.push((i, "buy", "低位十字星".to_string()));
+            }
+        }
+    }
+    out
+}
+
 pub fn build(
     klines: &[Kline],
     champion: Option<(String, &StrategySpec)>,
@@ -205,6 +285,7 @@ pub fn build(
     // k=4：pivot 两侧各4根确认；max_gap=60：背离的两个摆动点最多隔60根
     let mut divs = divergences(&c, &dif, 4, 60, "MACD");
     divs.extend(divergences(&c, &rsi14, 4, 60, "RSI"));
+    divs.extend(candle_patterns(klines, &ma20));
     for (i, side, rule) in divs {
         let map = if side == "buy" { &mut extra_buy } else { &mut extra_sell };
         map.entry(i).or_default().push(rule);
@@ -477,6 +558,35 @@ mod tests {
             .iter()
             .find(|s| s.rules.iter().any(|x| x.contains("唐奇安20日上破") || x.contains("放量突破")));
         assert!(hit.is_some(), "expected donchian breakout signal");
+        assert_eq!(hit.unwrap().time, 30 * 86_400_000);
+    }
+
+    #[test]
+    fn bullish_engulfing_in_downtrend() {
+        let k = |t: i64, o: f64, h: f64, l: f64, c: f64| Kline {
+            open_time: t * 86_400_000,
+            open: o,
+            high: h,
+            low: l,
+            close: c,
+            volume: 100.0,
+            taker_buy_volume: 60.0,
+            trades: 10,
+        };
+        // 30 根阴线下行（昨收 < MA20 的下跌背景），随后一根阳线吞没前实体
+        let mut ks: Vec<Kline> = (0..30)
+            .map(|i| {
+                let base = 130.0 - i as f64;
+                k(i as i64, base, base + 0.6, base - 1.4, base - 1.0)
+            })
+            .collect();
+        ks.push(k(30, 99.5, 102.2, 99.0, 102.0));
+        let r = build(&ks, None);
+        let hit = r
+            .classic_signals
+            .iter()
+            .find(|s| s.side == "buy" && s.rules.iter().any(|x| x == "看涨吞没"));
+        assert!(hit.is_some(), "expected bullish engulfing signal");
         assert_eq!(hit.unwrap().time, 30 * 86_400_000);
     }
 

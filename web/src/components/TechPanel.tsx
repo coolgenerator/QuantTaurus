@@ -317,9 +317,10 @@ export default function TechPanel({ symbol, interval }: Props) {
       </div>
 
       <p className="text-[11px] leading-snug text-slate-500">
-        经典信号为教科书口径（MACD金叉死叉 / RSI超买超卖 / 布林触轨收回 / KDJ高低位交叉 /
-        神奇九转TD9 / MACD·RSI顶底背离 / 均线金叉死叉 / 多头空头排列 /
-        唐奇安20日突破·放量突破——背离标注在第二摆动点确认后第4根bar，唐奇安同向10根内只标首次），
+        经典信号为教科书口径，含约24条规则：指标类（MACD/RSI/布林/KDJ/均线金叉死叉/多空排列）、
+        计数类（神奇九转TD9）、背离类（MACD·RSI顶底背离，第二摆动点确认后第4根bar标注）、
+        突破类（唐奇安20日·放量，同向10根内只标首次）、K线形态类（吞没/锤子上吊/流星/启明黄昏星/
+        红三兵乌鸦/趋势末端十字星，均带MA20趋势背景过滤），
         <span className="text-amber-400/80">未经回测闸门验证，仅供参考</span>；大箭头 =
         同日多规则共振。◉ 冠军信号来自 evolve 闸门验证过的策略实际翻仓点。底部色带 =
         趋势（价格与MA50相对MA200位置）。
