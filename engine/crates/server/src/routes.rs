@@ -274,6 +274,11 @@ pub async fn plan(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResp
     Ok(Json(plans))
 }
 
+pub async fn portfolio(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+    let p = crate::plan::build_portfolio(&state).await.map_err(internal)?;
+    Ok(Json(p))
+}
+
 pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
     // 10分钟内存缓存：板块报告要打几十个 Yahoo 请求
     {
