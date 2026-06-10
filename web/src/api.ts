@@ -141,6 +141,30 @@ export interface PaperStatus {
   sessions: Record<string, PaperSession>
 }
 
+// ---------- Trade plans ----------
+
+export interface TradePlan {
+  /** Slot key, e.g. "NVDA|1d". */
+  key: string
+  symbol: string
+  interval: string
+  strategy: string
+  /** Target position in [-1, 1]; sign = direction, |value| = conviction. */
+  target_position: number
+  last_close: number
+  /** Price at which the signal flips direction; null = no flip within ±40%. */
+  flip_price: number | null
+  /** Flip price distance from last close, in percent (e.g. -10.7). */
+  flip_pct: number | null
+  /** Timestamp (ms) of the next signal recomputation. */
+  next_decision_ms: number
+  holdout_sharpe: number | null
+}
+
+export function fetchTradePlans(): Promise<TradePlan[]> {
+  return getJson('/api/plan')
+}
+
 // ---------- Sector rotation ----------
 
 export interface TickerStat {

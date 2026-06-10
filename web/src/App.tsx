@@ -5,6 +5,7 @@ import FactorPanel from './components/FactorPanel'
 import BacktestPanel from './components/BacktestPanel'
 import EvolvePanel from './components/EvolvePanel'
 import ChampionRegistry from './components/ChampionRegistry'
+import TradePlanPanel from './components/TradePlanPanel'
 import SectorPanel from './components/SectorPanel'
 import PaperPanel from './components/PaperPanel'
 import TradeFeed from './components/TradeFeed'
@@ -91,6 +92,11 @@ export default function App() {
           <BacktestPanel symbol={symbol} interval={interval} />
         </div>
         <EvolvePanel symbol={symbol} interval={interval} />
+
+        <div className="xl:col-span-3">
+          {/* 今日交易计划：方向/仓位/反转价/倒计时，用户最关心的面板。 */}
+          <TradePlanPanel />
+        </div>
 
         <div className="xl:col-span-3">
           {/* All champion slots across symbol/interval pairs. */}
