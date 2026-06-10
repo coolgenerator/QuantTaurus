@@ -75,6 +75,7 @@ export interface EvolveReport {
     spec: StrategySpec
     valid_metrics: BacktestMetrics
     holdout_metrics: BacktestMetrics
+    fold_sharpes?: number[]
   }
   promoted: boolean
   fitness_curve: number[]

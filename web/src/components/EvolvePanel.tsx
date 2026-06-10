@@ -105,6 +105,23 @@ function Report({ report }: { report: EvolveReport }) {
           champion · valid sharpe {fmtNum(report.champion.valid_metrics?.sharpe)} · holdout sharpe{' '}
           {fmtNum(report.champion.holdout_metrics?.sharpe)}
         </p>
+        {report.champion.fold_sharpes && report.champion.fold_sharpes.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {report.champion.fold_sharpes.map((s, i) => (
+              <span
+                key={i}
+                className={`rounded-md border px-2 py-0.5 font-mono text-[10px] ${
+                  s >= 0
+                    ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                    : 'border-rose-400/30 bg-rose-400/10 text-rose-300'
+                }`}
+                title={`validation fold ${i + 1} sharpe`}
+              >
+                F{i + 1} {s.toFixed(2)}
+              </span>
+            ))}
+          </div>
+        )}
         <pre className="max-h-32 overflow-auto rounded-xl border border-neon-purple/20 bg-black/40 p-3 font-mono text-xs leading-relaxed text-neon-cyan">
           {JSON.stringify(report.champion.spec, null, 2)}
         </pre>
