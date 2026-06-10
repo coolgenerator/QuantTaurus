@@ -105,10 +105,15 @@ pub async fn klines(
     Ok(Json(klines))
 }
 
+// 注意：axum Query + serde(flatten) 对数字字段会 400（serde_urlencoded 限制），
+// 必须平铺字段
 #[derive(Deserialize)]
 pub struct FactorQuery {
-    #[serde(flatten)]
-    base: KlineQuery,
+    symbol: String,
+    #[serde(default = "default_interval")]
+    interval: String,
+    #[serde(default = "default_days")]
+    days: i64,
     #[serde(default = "default_period")]
     period: usize,
 }
@@ -120,7 +125,12 @@ pub async fn factors(
     State(state): State<Arc<AppState>>,
     Query(q): Query<FactorQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let (klines, _) = load_klines(&state, &q.base).await?;
+    let base = KlineQuery {
+        symbol: q.symbol.clone(),
+        interval: q.interval.clone(),
+        days: q.days,
+    };
+    let (klines, _) = load_klines(&state, &base).await?;
     let times: Vec<i64> = klines.iter().map(|k| k.open_time).collect();
     let mut out = serde_json::Map::new();
     out.insert("times".into(), json!(times));
