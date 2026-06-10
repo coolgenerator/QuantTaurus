@@ -4,6 +4,8 @@ import {
   fetchPaperStatus,
   fetchTradePlans,
   fmtNum,
+  type OptionAction,
+  type OptionExitDynamic,
   type OptionPaperPosition,
   type PaperSession,
   type TradePlan,
@@ -12,6 +14,7 @@ import {
 const OPT_SERVICE_HINT =
   '期权服务未运行：python3 bridge/options_service.py（需 OpenD 已登录）'
 
+/** Legacy fallback when the backend hasn't attached exit_dynamic (old positions). */
 const OPTION_EXIT_RULES_TITLE =
   '自动平仓规则：① 股票信号反转（方向翻转即平仓） ② 剩余 DTE ≤ 7 强制平仓 ③ 权利金 -50% 止损 ④ 权利金 +100% 止盈'
 
@@ -250,10 +253,23 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
 
 // ---------- option holdings ----------
 
-/** Stop-loss → take-profit bar: left = entry×0.5, right = entry×2.0, dot = mark. */
-function StopTargetBar({ entry, mark }: { entry: number; mark: number }) {
-  const lo = entry * 0.5
-  const hi = entry * 2.0
+/**
+ * Stop-loss → take-profit bar, dot = mark.
+ * Endpoints come from backend exit_dynamic (sl_premium / tp_premium);
+ * legacy positions without exit_dynamic fall back to entry×0.5 / entry×2.0.
+ */
+function StopTargetBar({
+  entry,
+  mark,
+  exit,
+}: {
+  entry: number
+  mark: number
+  exit?: OptionExitDynamic
+}) {
+  const lo = exit ? exit.sl_premium : entry * 0.5
+  const hi = exit ? exit.tp_premium : entry * 2.0
+  const slPct = exit ? exit.sl_pct_effective : -50
   const span = hi - lo
   const pos = span > 0 ? Math.min(Math.max((mark - lo) / span, 0), 1) : 0.5
   // 靠近止损端（左端 15% 以内）→ 红色脉冲警示。
@@ -261,10 +277,10 @@ function StopTargetBar({ entry, mark }: { entry: number; mark: number }) {
   return (
     <div className="min-w-[150px]">
       <div className="flex items-center justify-between font-mono text-[10px]">
-        <span className="text-neon-red" title="止损价（权利金 -50%）">
+        <span className="text-neon-red" title={`止损价（权利金 ${fmtSignedPct(slPct)}）`}>
           {fmtUsd(lo)}
         </span>
-        <span className="text-neon-green" title="止盈价（权利金 +100%）">
+        <span className="text-neon-green" title="止盈价">
           {fmtUsd(hi)}
         </span>
       </div>
@@ -279,29 +295,102 @@ function StopTargetBar({ entry, mark }: { entry: number; mark: number }) {
           title={`现价 ${fmtUsd(mark)}${danger ? ' · 接近止损线！' : ''}`}
         />
       </div>
+      <p className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-600">
+        止损 {fmtSignedPct(slPct)}
+        {exit?.iv_adaptive && (
+          <span
+            className="rounded border border-neon-purple/40 bg-neon-purple/10 px-1 text-[9px] leading-tight text-neon-purple"
+            title="止损宽度按建仓 IV 自适应调整"
+          >
+            IV自适应
+          </span>
+        )}
+      </p>
     </div>
   )
 }
 
-/** "7/2 → 最迟 6/25 卖出 · 还剩 15 天"; ≤3 days amber, overdue red. */
-function SellByCell({ expiry, nowMs }: { expiry: string; nowMs: number }) {
-  const exp = parseExpiry(expiry)
-  if (!exp) return <span className="text-slate-600">{expiry}</span>
-  const sellBy = new Date(exp.getTime() - 7 * DAY_MS)
+/** Whole days from "today 00:00" (local) to the day containing targetMs. */
+function daysUntil(targetMs: number, nowMs: number): number {
   const now = new Date(nowMs)
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const daysLeft = Math.round((sellBy.getTime() - todayStart) / DAY_MS)
-  const tone =
-    daysLeft < 0 ? 'text-neon-red' : daysLeft <= 3 ? 'text-amber-300' : 'text-slate-200'
+  const t = new Date(targetMs)
+  const targetDayStart = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()
+  return Math.round((targetDayStart - todayStart) / DAY_MS)
+}
+
+function sellByTone(daysLeft: number): string {
+  return daysLeft < 0 ? 'text-neon-red' : daysLeft <= 3 ? 'text-amber-300' : 'text-slate-200'
+}
+
+/**
+ * "7/2 → 最迟 6/25 卖出 · 还剩 15 天"; ≤3 days amber, overdue red.
+ * Uses backend planned_exit_ms when exit_dynamic is present
+ * (subline tags 信号持有期 vs 到期强平); legacy positions fall back to expiry−7d.
+ */
+function SellByCell({
+  expiry,
+  exit,
+  nowMs,
+}: {
+  expiry: string
+  exit?: OptionExitDynamic
+  nowMs: number
+}) {
+  const exp = parseExpiry(expiry)
+  if (exit && Number.isFinite(exit.planned_exit_ms) && exit.planned_exit_ms > 0) {
+    const planned = new Date(exit.planned_exit_ms)
+    const daysLeft = daysUntil(exit.planned_exit_ms, nowMs)
+    return (
+      <div className="whitespace-nowrap">
+        {exp && (
+          <>
+            <span className="text-slate-400">{fmtShortDate(exp)}</span>
+            <span className="text-slate-600"> → </span>
+          </>
+        )}
+        <span className={sellByTone(daysLeft)}>
+          最迟 {fmtShortDate(planned)} 卖出 ·{' '}
+          {daysLeft < 0 ? '已超期' : `还剩 ${daysLeft} 天`}
+          {daysLeft >= 0 && daysLeft <= 3 && ' ⚠'}
+        </span>
+        <p className="mt-0.5 text-[10px] text-slate-600">
+          {exit.planned_exit_ms < exit.hard_close_ms ? '(信号持有期)' : '(到期强平)'}
+        </p>
+      </div>
+    )
+  }
+  // 旧持仓兼容：前端按 expiry − 7 天估算。
+  if (!exp) return <span className="text-slate-600">{expiry}</span>
+  const sellBy = new Date(exp.getTime() - 7 * DAY_MS)
+  const daysLeft = daysUntil(sellBy.getTime(), nowMs)
   return (
     <span className="whitespace-nowrap">
       <span className="text-slate-400">{fmtShortDate(exp)}</span>
       <span className="text-slate-600"> → </span>
-      <span className={tone}>
+      <span className={sellByTone(daysLeft)}>
         最迟 {fmtShortDate(sellBy)} 卖出 ·{' '}
         {daysLeft < 0 ? '已超期' : `还剩 ${daysLeft} 天`}
         {daysLeft >= 0 && daysLeft <= 3 && ' ⚠'}
       </span>
+    </span>
+  )
+}
+
+/** Underlying flip price + distance from underlying_last; null flip = stable within ±40%. */
+function OptionFlipCell({ exit, action }: { exit?: OptionExitDynamic; action: OptionAction }) {
+  if (!exit) return <span className="text-slate-600">—</span>
+  if (exit.underlying_flip_price === null) {
+    return <span className="text-slate-500">±40% 内稳固</span>
+  }
+  const pct =
+    exit.underlying_last !== null && exit.underlying_last > 0
+      ? (exit.underlying_flip_price / exit.underlying_last - 1) * 100
+      : null
+  return (
+    <span className={action === 'BUY CALL' ? 'text-neon-red' : 'text-neon-green'}>
+      {fmtNum(exit.underlying_flip_price)}
+      {pct !== null && <span className="text-slate-500"> ({fmtSignedPct(pct)})</span>}
     </span>
   )
 }
@@ -325,7 +414,15 @@ function OptionHoldingsTable({
       <table className="w-full border-collapse">
         <thead>
           <tr className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
-            {['标的', '合约', '买入日期', '成本 → 现价', '止盈止损进度', '目标售出日期'].map((h) => (
+            {[
+              '标的',
+              '合约',
+              '买入日期',
+              '成本 → 现价',
+              '止盈止损进度',
+              '标的反转价',
+              '目标售出日期',
+            ].map((h) => (
               <th key={h} className="border-b border-white/10 px-2.5 py-1.5 text-left">
                 {h}
               </th>
@@ -342,7 +439,7 @@ function OptionHoldingsTable({
               <tr
                 key={underlying}
                 className="border-b border-white/[0.03] font-mono text-xs transition hover:bg-white/[0.06]"
-                title={OPTION_EXIT_RULES_TITLE}
+                title={pos.exit_dynamic?.rules_note || OPTION_EXIT_RULES_TITLE}
               >
                 <td className="px-2.5 py-2 font-bold text-slate-100">{underlying}</td>
                 <td className="px-2.5 py-2 text-slate-300">
@@ -362,10 +459,13 @@ function OptionHoldingsTable({
                   </span>
                 </td>
                 <td className="px-2.5 py-2">
-                  <StopTargetBar entry={pos.entry_premium} mark={pos.mark} />
+                  <StopTargetBar entry={pos.entry_premium} mark={pos.mark} exit={pos.exit_dynamic} />
                 </td>
                 <td className="px-2.5 py-2">
-                  <SellByCell expiry={pos.expiry} nowMs={nowMs} />
+                  <OptionFlipCell exit={pos.exit_dynamic} action={pos.action} />
+                </td>
+                <td className="px-2.5 py-2">
+                  <SellByCell expiry={pos.expiry} exit={pos.exit_dynamic} nowMs={nowMs} />
                 </td>
               </tr>
             )

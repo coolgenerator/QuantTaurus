@@ -378,6 +378,27 @@ export function fetchOptionPlans(): Promise<OptionPlansResponse> {
 
 // ---------- Options paper trading ----------
 
+/** Backend-computed dynamic exit parameters for an open option position. */
+export interface OptionExitDynamic {
+  /** Take-profit premium (per share). */
+  tp_premium: number
+  /** Stop-loss premium (per share). */
+  sl_premium: number
+  /** Effective stop-loss percent, signed (e.g. -50). */
+  sl_pct_effective: number
+  /** True when the stop width was adapted to entry IV. */
+  iv_adaptive: boolean
+  /** Underlying price that flips the stock signal; null = no flip within ±40%. */
+  underlying_flip_price: number | null
+  underlying_last: number | null
+  /** Planned exit timestamp (ms); min(signal holding window, hard close). */
+  planned_exit_ms: number
+  /** Forced-close timestamp (ms), e.g. DTE floor before expiry. */
+  hard_close_ms: number
+  /** Human-readable summary of the exit rules for this position. */
+  rules_note: string
+}
+
 export interface OptionPaperPosition {
   code: string
   qty: number
@@ -389,6 +410,12 @@ export interface OptionPaperPosition {
   expiry: string
   strike: number
   rationale: string
+  /** IV at entry (percent units); missing on legacy positions. */
+  iv_at_entry?: number
+  /** Delta at entry; missing on legacy positions. */
+  delta_at_entry?: number
+  /** Dynamic exit parameters; missing on legacy positions (fall back to frontend defaults). */
+  exit_dynamic?: OptionExitDynamic
 }
 
 export interface OptionPaperTrade {
