@@ -43,6 +43,7 @@ pub fn market_params(symbol: &str, interval: Interval) -> (f64, CostModel) {
             CostModel {
                 fee_rate: 0.001,
                 slippage: 0.0005,
+                ..Default::default()
             },
         )
     } else {
@@ -62,6 +63,7 @@ pub fn market_params(symbol: &str, interval: Interval) -> (f64, CostModel) {
             CostModel {
                 fee_rate: env_f64("QHH_STOCK_FEE", 0.00002),
                 slippage: env_f64("QHH_STOCK_SLIPPAGE", 0.0003),
+                ..Default::default()
             },
         )
     }
@@ -157,6 +159,9 @@ pub struct BacktestReq {
     #[serde(default = "default_days")]
     days: i64,
     spec: StrategySpec,
+    /// 自定义成本模型（缺省用资产类别默认值）
+    #[serde(default)]
+    cost: Option<CostModel>,
 }
 
 pub async fn backtest(
@@ -172,7 +177,8 @@ pub async fn backtest(
     if klines.len() < 300 {
         return Err(bad("not enough data"));
     }
-    let (bars_per_year, cost) = market_params(&q.symbol, interval);
+    let (bars_per_year, default_cost) = market_params(&q.symbol, interval);
+    let cost = req.cost.unwrap_or(default_cost);
     let targets = req.spec.signals(&klines);
     let sigs = qbacktest::to_signals(&klines, &targets);
     let result = qbacktest::run(&klines, &sigs, cost, bars_per_year, 1);

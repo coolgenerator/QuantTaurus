@@ -14,6 +14,17 @@ pub struct CostModel {
     pub fee_rate: f64,
     /// 比例滑点（按成交额）
     pub slippage: f64,
+    /// 每笔订单最低费用（美元）。短线/小资金下固定费用占比远超比例费率，
+    /// 仅当 > 0 时生效，需配合 capital_usd 折算成收益率扣减
+    #[serde(default)]
+    pub min_fee_usd: f64,
+    /// 名义资金（美元），用于把最低费用折算为比例
+    #[serde(default = "default_capital")]
+    pub capital_usd: f64,
+}
+
+fn default_capital() -> f64 {
+    10_000.0
 }
 
 impl Default for CostModel {
@@ -21,7 +32,24 @@ impl Default for CostModel {
         Self {
             fee_rate: 0.001,
             slippage: 0.0005,
+            min_fee_usd: 0.0,
+            capital_usd: default_capital(),
         }
+    }
+}
+
+impl CostModel {
+    /// 本次调仓的总成本（占当前净值比例）。
+    /// turnover = |目标仓位 - 当前仓位|，equity = 当前净值（初始1.0）
+    pub fn cost_frac(&self, turnover: f64, equity: f64) -> f64 {
+        let prop_fee = turnover * self.fee_rate;
+        let fee = if self.min_fee_usd > 0.0 && self.capital_usd > 0.0 {
+            let min_frac = self.min_fee_usd / (equity * self.capital_usd);
+            prop_fee.max(min_frac)
+        } else {
+            prop_fee
+        };
+        fee + turnover * self.slippage
     }
 }
 
@@ -70,7 +98,7 @@ pub fn run(
         };
         let turnover = (target - position).abs();
         if turnover > 1e-9 {
-            net_ret -= turnover * (cost.fee_rate + cost.slippage);
+            net_ret -= cost.cost_frac(turnover, equity);
             // 统计完整开平为一笔交易：从0开仓记为入场
             if position.abs() < 1e-9 && target.abs() > 1e-9 {
                 trade_entry_equity = equity;
@@ -304,7 +332,7 @@ mod tests {
     fn buy_and_hold_tracks_price() {
         let ks = kl(&[100.0, 110.0, 121.0, 133.1]);
         let sigs = to_signals(&ks, &[1.0, 1.0, 1.0, 1.0]);
-        let r = run(&ks, &sigs, CostModel { fee_rate: 0.0, slippage: 0.0 }, 8760.0, 1);
+        let r = run(&ks, &sigs, CostModel { fee_rate: 0.0, slippage: 0.0, ..Default::default() }, 8760.0, 1);
         // 第0根收盘发信号，第1根成交：错过第一段涨幅
         let expected = 133.1 / 110.0;
         assert!((r.equity.last().unwrap().equity - expected).abs() < 1e-9);
@@ -323,8 +351,24 @@ mod tests {
         // 价格只在最后一根暴涨；若信号同bar成交会赚到，next-bar 则赚不到
         let ks = kl(&[100.0, 100.0, 100.0, 200.0]);
         let sigs = to_signals(&ks, &[0.0, 0.0, 0.0, 1.0]); // 暴涨当根才发信号
-        let r = run(&ks, &sigs, CostModel { fee_rate: 0.0, slippage: 0.0 }, 8760.0, 1);
+        let r = run(&ks, &sigs, CostModel { fee_rate: 0.0, slippage: 0.0, ..Default::default() }, 8760.0, 1);
         assert!((r.equity.last().unwrap().equity - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn min_fee_dominates_small_orders() {
+        let c = CostModel {
+            fee_rate: 0.0001,
+            slippage: 0.0,
+            min_fee_usd: 1.0,
+            capital_usd: 10_000.0,
+        };
+        // 小额调仓：比例费 0.01×0.0001=1e-6，最低费 1/10000=1e-4 占主导
+        assert!((c.cost_frac(0.01, 1.0) - 1e-4).abs() < 1e-12);
+        // 大额调仓：比例费 1.0×0.0001=1e-4 == 最低费，不再额外惩罚
+        assert!((c.cost_frac(1.0, 1.0) - 1e-4).abs() < 1e-12);
+        // 净值翻倍后最低费占比减半
+        assert!((c.cost_frac(0.01, 2.0) - 5e-5).abs() < 1e-12);
     }
 
     #[test]
