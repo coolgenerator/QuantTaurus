@@ -9,6 +9,7 @@
 //!   GET  /api/champion
 //!   GET  /ws                实时行情 + 进化进度推送
 
+mod mine_job;
 mod optbt;
 mod paper;
 mod plan;
@@ -66,6 +67,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/search", get(routes::search))
         .route("/api/portfolio", get(routes::portfolio))
         .route("/api/options_backtest", post(routes::options_backtest))
+        .route("/api/mine", post(routes::mine_start))
+        .route("/api/mine/status", get(routes::mine_status))
+        .route("/api/factors_mined", get(routes::factors_mined))
         .route("/ws", get(routes::ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);

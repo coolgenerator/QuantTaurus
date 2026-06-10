@@ -86,6 +86,9 @@ pub struct AppState {
     /// 板块报告缓存：(生成时间ms, 序列化结果)
     pub sector_cache: Mutex<Option<(i64, serde_json::Value)>>,
     pub paper_path: PathBuf,
+    /// 因子挖掘任务状态与因子库
+    pub mine_status: Mutex<crate::mine_job::MineStatus>,
+    pub factor_lib_path: PathBuf,
 }
 
 impl AppState {
@@ -124,6 +127,8 @@ impl AppState {
             paper: Mutex::new(paper),
             sector_cache: Mutex::new(None),
             paper_path,
+            mine_status: Mutex::new(crate::mine_job::MineStatus::Idle),
+            factor_lib_path: PathBuf::from(data_dir).join("factors.json"),
         })
     }
 

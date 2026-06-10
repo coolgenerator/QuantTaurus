@@ -280,6 +280,45 @@ pub async fn portfolio(State(state): State<Arc<AppState>>) -> AppResult<impl Int
 }
 
 #[derive(Deserialize)]
+pub struct MineReq {
+    #[serde(default = "default_mine_days")]
+    days: i64,
+    #[serde(default)]
+    config: Option<qmine::MineConfig>,
+}
+fn default_mine_days() -> i64 {
+    3650
+}
+
+pub async fn mine_start(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MineReq>,
+) -> AppResult<impl IntoResponse> {
+    {
+        let st = state.mine_status.lock().unwrap();
+        if matches!(*st, crate::mine_job::MineStatus::Running { .. }) {
+            return Err(bad("mining already running"));
+        }
+    }
+    let panel = crate::mine_job::build_panel(&state, req.days)
+        .await
+        .map_err(internal)?;
+    let cfg = req.config.unwrap_or_default();
+    let (n_sym, n_dates) = (panel.n_symbols(), panel.n_dates());
+    crate::mine_job::launch_mine(state.clone(), panel, cfg);
+    Ok(Json(json!({"started": true, "universe": n_sym, "dates": n_dates})))
+}
+
+pub async fn mine_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let st = state.mine_status.lock().unwrap().clone();
+    Json(st)
+}
+
+pub async fn factors_mined(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(crate::mine_job::load_library(&state))
+}
+
+#[derive(Deserialize)]
 pub struct OptBtReq {
     symbol: String,
     #[serde(default = "default_days")]
