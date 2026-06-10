@@ -1,8 +1,14 @@
 import { useWsStatus } from '../ws'
 
 export const SYMBOL_GROUPS = {
+  '指数/ETF': ['SPY', 'QQQ', 'SMH', 'SOXX', '^GSPC', '^IXIC', '^VIX'],
+  大型科技: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA'],
+  '半导体/芯片': ['NVDA', 'AMD', 'AVGO', 'TSM', 'INTC', 'QCOM', 'ARM', 'MRVL'],
+  '内存/存储': ['MU', 'WDC', 'STX', 'SNDK'],
+  'AI 基建/算力': ['SMCI', 'DELL', 'VRT', 'ANET', 'ORCL', 'PLTR', 'CRWV'],
+  半导体设备: ['ASML', 'AMAT', 'LRCX', 'KLAC', 'TER'],
+  'AI 电力': ['VST', 'CEG', 'GEV'],
   Crypto: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
-  'US Stocks': ['SPY', 'QQQ', '^GSPC', '^IXIC', 'AAPL', 'NVDA'],
 } as const
 export const INTERVALS = ['1h', '4h', '1d'] as const
 

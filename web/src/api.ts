@@ -133,6 +133,46 @@ export interface PaperStatus {
   sessions: Record<string, PaperSession>
 }
 
+// ---------- Sector rotation ----------
+
+export interface TickerStat {
+  symbol: string
+  last_close: number
+  mom_1m: number | null
+  mom_3m: number | null
+  mom_6m: number | null
+  above_ma50: boolean | null
+  vol_20d: number | null
+}
+
+export type SectorLabel = 'leader' | 'emerging' | 'neutral' | 'laggard'
+
+export interface SectorStat {
+  key: string
+  name_zh: string
+  rank: number
+  label: SectorLabel
+  /** z-score composite, roughly -6..+6. */
+  hotspot_score: number
+  avg_mom_1m: number
+  avg_mom_3m: number
+  avg_mom_6m: number
+  /** Excess 3m momentum vs SPY. */
+  rel_3m: number
+  /** Fraction of constituents above their 50d MA, 0..1. */
+  breadth: number
+  /** Momentum acceleration (annualized). */
+  accel: number
+  tickers: TickerStat[]
+}
+
+export interface SectorReport {
+  as_of: number // ms
+  benchmark: TickerStat // SPY
+  method_note: string
+  sectors: SectorStat[]
+}
+
 // ---------- WS message types ----------
 
 export interface WsKlineMsg {
@@ -238,6 +278,10 @@ export function fetchChampions(): Promise<ChampionRegistryMap> {
 
 export function fetchPaperStatus(): Promise<PaperStatus> {
   return getJson('/api/paper')
+}
+
+export function fetchSectors(): Promise<SectorReport> {
+  return getJson('/api/sectors')
 }
 
 // ---------- Misc utils ----------

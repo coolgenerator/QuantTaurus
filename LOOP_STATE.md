@@ -32,9 +32,16 @@
 - [ ] P11 多槽冠军注册表（急迫：QQQ 晋升把 SPY/SOL 冠军顶掉了——
       champion.json 改为 {"SPY|1d": {...}, "QQQ|1d": {...}} 映射，
       /api/champion 返回全部，paper 引擎每个冠军各开一个会话）
+- [x] P11 多槽冠军注册表 + 前端多会话 PaperPanel + ChampionRegistry 面板
+      （注册表现有 SPY|1d 1.59 / QQQ|1d 0.52 / SOLUSDT|1d 0.48 三冠军并行模拟盘）
+- [x] P11.5 板块模块（用户要求）：33 股票×6 产业板块（科技/芯片/内存/AI基建/
+      设备/电力），sectors.rs 横截面动量轮动信号（rel+accel+breadth z合成），
+      /api/sectors 10min 缓存；TopBar 股票按板块分组；SectorPanel 前端
+      （agent 构建中：排行榜+热力格+联动主图）
 - [ ] P12 股票实时报价轮询（盘中每5s Yahoo quote → 合成 MarketEvent，
       让股票K线和 paper 也实时跳动；注意盘外静默）
-- [ ] P13 打磨：lint 基线清理、回测报告导出、^GSPC/^IXIC/单股实验
+- [ ] P13 打磨：lint 基线清理、回测报告导出、热门个股进化实验（NVDA/MU 等）
+- [ ] P14 可选：VIX regime 过滤因子、基本面数据（FRED宏观）接入
 
 ## 当前进度备注
 

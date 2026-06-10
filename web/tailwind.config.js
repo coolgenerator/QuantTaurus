@@ -33,12 +33,23 @@ export default {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
+        'glow-purple': {
+          '0%, 100%': {
+            boxShadow: '0 0 4px rgba(167,139,250,0.35)',
+            borderColor: 'rgba(167,139,250,0.45)',
+          },
+          '50%': {
+            boxShadow: '0 0 16px rgba(167,139,250,0.85), 0 0 32px rgba(167,139,250,0.35)',
+            borderColor: 'rgba(167,139,250,0.95)',
+          },
+        },
       },
       animation: {
         'pulse-dot': 'pulse-dot 1.6s ease-in-out infinite',
         'flash-up': 'flash-up 0.8s ease-out',
         'flash-down': 'flash-down 0.8s ease-out',
         shimmer: 'shimmer 2.2s linear infinite',
+        'glow-purple': 'glow-purple 1.8s ease-in-out infinite',
       },
     },
   },
