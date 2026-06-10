@@ -4,6 +4,7 @@ import PriceChart from './components/PriceChart'
 import FactorPanel from './components/FactorPanel'
 import BacktestPanel from './components/BacktestPanel'
 import EvolvePanel from './components/EvolvePanel'
+import PaperPanel from './components/PaperPanel'
 import TradeFeed from './components/TradeFeed'
 
 export default function App() {
@@ -29,6 +30,11 @@ export default function App() {
           <BacktestPanel symbol={symbol} interval={interval} />
         </div>
         <EvolvePanel symbol={symbol} interval={interval} />
+
+        <div className="xl:col-span-3">
+          {/* Paper trading follows the champion strategy, not the selected symbol. */}
+          <PaperPanel />
+        </div>
       </main>
 
       <TradeFeed symbol={symbol} />

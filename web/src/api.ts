@@ -96,6 +96,29 @@ export interface Champion {
   lineage: { spec: StrategySpec; holdout_sharpe: number; promoted_ms: number }[]
 }
 
+export interface PaperTrade {
+  time: number // ms
+  price: number
+  from_position: number
+  to_position: number
+  cost: number
+}
+
+export interface PaperSession {
+  symbol: string
+  interval: string
+  spec: StrategySpec
+  started_ms: number
+  equity: number
+  position: number
+  last_price: number
+  last_bar_open: number
+  curve: EquityPoint[]
+  trades: PaperTrade[]
+}
+
+export type PaperStatus = { active: false } | { active: true; session: PaperSession }
+
 // ---------- WS message types ----------
 
 export interface WsKlineMsg {
@@ -123,7 +146,19 @@ export interface WsEvolveDoneMsg {
   champion_name: string
 }
 
-export type WsMessage = WsKlineMsg | WsTradeMsg | WsEvolveDoneMsg
+export interface WsPaperMsg {
+  channel: 'paper'
+  time: number // ms
+  equity: number
+  position: number
+  price: number
+}
+
+export interface WsPaperTradeMsg extends PaperTrade {
+  channel: 'paper_trade'
+}
+
+export type WsMessage = WsKlineMsg | WsTradeMsg | WsEvolveDoneMsg | WsPaperMsg | WsPaperTradeMsg
 
 // ---------- Fetch helpers ----------
 
@@ -179,6 +214,10 @@ export function fetchEvolveStatus(): Promise<EvolveStatus> {
 
 export function fetchChampion(): Promise<Champion> {
   return getJson('/api/champion')
+}
+
+export function fetchPaperStatus(): Promise<PaperStatus> {
+  return getJson('/api/paper')
 }
 
 // ---------- Misc utils ----------
