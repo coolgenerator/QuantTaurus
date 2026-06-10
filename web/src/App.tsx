@@ -91,7 +91,7 @@ export default function App() {
     if (v === 'options') setOptionsMounted(true)
   }, [])
 
-  // 板块面板点选成分股 → 联动主K线图；股票数据源不支持 4h，需回退 1d。
+  // 全局选定标的：顶栏 SymbolPicker / 板块面板点选共用；股票数据源不支持 4h，需回退 1d。
   const handleSelectSymbol = useCallback(
     (s: string) => {
       setSymbol(s)
@@ -100,23 +100,13 @@ export default function App() {
     [interval],
   )
 
-  // 顶栏搜索选中：切换标的 + 自动跳回「股票分析」页。
-  const handleSearchSelect = useCallback(
-    (s: string) => {
-      handleSelectSymbol(s)
-      setView('stocks')
-    },
-    [handleSelectSymbol],
-  )
-
   return (
     <div className="mx-auto flex max-w-[1500px] flex-col gap-4 p-4">
       <TopBar
         symbol={symbol}
         interval={interval}
-        onSymbolChange={setSymbol}
+        onSymbolChange={handleSelectSymbol}
         onIntervalChange={setInterval}
-        onSearchSelect={handleSearchSelect}
       />
 
       <ViewTabs view={view} onChange={changeView} />
@@ -167,10 +157,10 @@ export default function App() {
         </section>
       </div>
 
-      {/* 期权分析全屏页 */}
+      {/* 期权分析全屏页：跟随全局 symbol */}
       {optionsMounted && (
         <div className={view === 'options' ? '' : 'hidden'}>
-          <OptionsPanel />
+          <OptionsPanel symbol={symbol} />
         </div>
       )}
 

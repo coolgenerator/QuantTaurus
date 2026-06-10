@@ -6,8 +6,7 @@ import {
   type OptionChain,
   type OptionRow,
 } from '../api'
-
-const OPTION_SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MU', 'AMD'] as const
+import { isCrypto } from './TopBar'
 
 const SERVICE_HINT =
   '期权服务未运行：python3 bridge/options_service.py（需 OpenD 已登录）'
@@ -426,46 +425,68 @@ function TQuoteTable({ chain }: { chain: OptionChain }) {
 
 // ---------- main panel ----------
 
-export default function OptionsPanel() {
-  const [symbol, setSymbol] = useState<string>('SPY')
-  /** 已拉取到期日的标的 + 列表；与当前 symbol 不一致即视为加载中。 */
+export default function OptionsPanel({ symbol }: { symbol: string }) {
+  /** 已拉取到期日的标的 + 列表。 */
   const [expState, setExpState] = useState<{ symbol: string; expirations: string[] } | null>(null)
+  const [loadingExp, setLoadingExp] = useState(false)
+  /** expirations 拉取失败的错误（可点「重试」）。 */
+  const [expError, setExpError] = useState<string | null>(null)
   const [expiry, setExpiry] = useState<string>('')
   const [chain, setChain] = useState<OptionChain | null>(null)
   const [loadingChain, setLoadingChain] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const loadingExp = expState?.symbol !== symbol
-  const expirations = loadingExp ? [] : (expState?.expirations ?? [])
+  const cryptoSymbol = isCrypto(symbol)
+  const expirations = expState?.symbol === symbol ? expState.expirations : []
 
-  // 选标的后自动拉到期日，默认选最近的一个。
-  useEffect(() => {
-    let cancelled = false
-    fetchOptionExpirations(symbol)
-      .then((res) => {
-        if (cancelled) return
-        const exps = [...res.expirations].sort()
-        setExpState({ symbol, expirations: exps })
-        setExpiry(exps[0] ?? '')
-        setError(null)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setExpState({ symbol, expirations: [] })
-        setExpiry('')
-        setError(SERVICE_HINT)
-      })
-    return () => {
-      cancelled = true
+  /** 丢弃过期的 expirations 响应（symbol 已切换或重试已发起）。 */
+  const expSeqRef = useRef(0)
+
+  /** 拉到期日并默认选最近的一个；返回列表供「加载期权链」串联使用。 */
+  const loadExpirations = useCallback(async (sym: string): Promise<string[]> => {
+    const seq = ++expSeqRef.current
+    setLoadingExp(true)
+    setExpError(null)
+    try {
+      const res = await fetchOptionExpirations(sym)
+      if (expSeqRef.current !== seq) return []
+      const exps = [...res.expirations].sort()
+      setExpState({ symbol: sym, expirations: exps })
+      setExpiry(exps[0] ?? '')
+      return exps
+    } catch {
+      if (expSeqRef.current !== seq) return []
+      setExpState({ symbol: sym, expirations: [] })
+      setExpiry('')
+      setExpError(SERVICE_HINT)
+      return []
+    } finally {
+      if (expSeqRef.current === seq) setLoadingExp(false)
     }
-  }, [symbol])
+  }, [])
+
+  // 全局 symbol 变化：清掉旧标的的链/错误，自动重拉到期日（加密货币不发请求）。
+  useEffect(() => {
+    setChain(null)
+    setError(null)
+    setExpError(null)
+    setExpiry('')
+    if (isCrypto(symbol)) return
+    void loadExpirations(symbol)
+  }, [symbol, loadExpirations])
 
   const loadChain = useCallback(async () => {
-    if (!expiry) return
+    // expirations 为空（如上次拉取失败）先重拉，再用最近到期日加载。
+    let exp = expiry
+    if (!exp) {
+      const exps = await loadExpirations(symbol)
+      exp = exps[0] ?? ''
+      if (!exp) return
+    }
     setLoadingChain(true)
     setError(null)
     try {
-      setChain(await fetchOptionChain(symbol, expiry))
+      setChain(await fetchOptionChain(symbol, exp))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       // 网络层失败（sidecar 没起）给友好提示，HTTP 错误保留原文。
@@ -474,7 +495,7 @@ export default function OptionsPanel() {
     } finally {
       setLoadingChain(false)
     }
-  }, [symbol, expiry])
+  }, [symbol, expiry, loadExpirations])
 
   const a = chain?.analysis ?? null
   const atmIv =
@@ -487,6 +508,16 @@ export default function OptionsPanel() {
   const pcrTone = (v: number | null | undefined): 'pos' | 'neg' | 'neutral' =>
     !isNum(v) ? 'neutral' : v > 1 ? 'neg' : 'pos'
 
+  // 加密货币无期权：占位卡，不发任何请求。
+  if (cryptoSymbol) {
+    return (
+      <div className="glass-card flex h-56 flex-col items-center justify-center gap-2 p-6 text-center">
+        <p className="font-mono text-lg font-bold text-neon-cyan">{symbol}</p>
+        <p className="text-sm text-slate-400">期权仅支持美股标的——请在顶栏选择/搜索美股</p>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {/* 控制行 */}
@@ -495,20 +526,12 @@ export default function OptionsPanel() {
           Options Chain <span className="text-slate-500">· 期权链分析</span>
         </h2>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">标的</span>
-          <select
-            className="select-dark font-mono"
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-          >
-            {OPTION_SYMBOLS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">标的（顶栏）</span>
+          <span className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 font-mono text-sm font-bold text-neon-cyan">
+            {symbol}
+          </span>
+        </div>
 
         <label className="flex flex-col gap-1">
           <span className="text-[10px] uppercase tracking-wider text-slate-500">到期日</span>
@@ -528,7 +551,11 @@ export default function OptionsPanel() {
           </select>
         </label>
 
-        <button className="btn-neon" onClick={() => void loadChain()} disabled={loadingChain || !expiry}>
+        <button
+          className="btn-neon"
+          onClick={() => void loadChain()}
+          disabled={loadingChain || loadingExp}
+        >
           {loadingChain ? '加载中…' : '加载期权链'}
         </button>
 
@@ -540,15 +567,28 @@ export default function OptionsPanel() {
         )}
       </section>
 
+      {expError && (
+        <div className="flex items-center gap-3 rounded-lg border border-neon-red/40 bg-neon-red/10 px-4 py-3 text-sm text-neon-red">
+          <span className="flex-1">到期日加载失败：{expError}</span>
+          <button
+            className="shrink-0 rounded-lg border border-neon-red/50 px-3 py-1 text-xs font-semibold transition hover:bg-neon-red/20"
+            onClick={() => void loadExpirations(symbol)}
+            disabled={loadingExp}
+          >
+            {loadingExp ? '重试中…' : '重试'}
+          </button>
+        </div>
+      )}
+
       {error && (
         <p className="rounded-lg border border-neon-red/40 bg-neon-red/10 px-4 py-3 text-sm text-neon-red">
           {error}
         </p>
       )}
 
-      {!chain && !error && !loadingChain && (
+      {!chain && !error && !expError && !loadingChain && (
         <div className="glass-card flex h-48 items-center justify-center text-sm text-slate-500">
-          选择标的与到期日，点击「加载期权链」开始分析（后端缓存 120s，重复请求很快）。
+          选择到期日，点击「加载期权链」开始分析（后端缓存 120s，重复请求很快）。
         </div>
       )}
 

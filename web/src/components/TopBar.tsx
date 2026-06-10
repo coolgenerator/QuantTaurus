@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react'
 import { searchSymbols, type SearchHit } from '../api'
 import { useWsStatus } from '../ws'
 
@@ -24,22 +24,31 @@ const QUOTE_TYPE_STYLE: Record<SearchHit['quote_type'], string> = {
   INDEX: 'border-amber-400/40 text-amber-300',
 }
 
-/** 防抖搜索框：调 /api/search，浮层下拉选代码（键盘上下+回车，Esc/点外关闭）。 */
-function SymbolSearch({ onSelect }: { onSelect: (symbol: string) => void }) {
+/**
+ * 单一组合框：显示态展示当前 symbol（mono 青色粗体 + ▾）；
+ * 聚焦进入编辑态（全选文本）——输入为空/未修改时浮层展示 SYMBOL_GROUPS 分组 chips，
+ * 输入 ≥2 字符切换为 /api/search 远程结果（300ms 防抖 + 键盘导航 + 丢弃过期响应）。
+ * 选中（点击/回车）调 onSelect；Esc/失焦恢复显示态不改值。
+ */
+function SymbolPicker({ value, onSelect }: { value: string; onSelect: (symbol: string) => void }) {
+  const [editing, setEditing] = useState(false)
   const [q, setQ] = useState('')
+  /** 聚焦后用户是否真正修改过输入（聚焦时预填当前 symbol，不算查询） */
+  const [dirty, setDirty] = useState(false)
   const [hits, setHits] = useState<SearchHit[]>([])
-  const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const seqRef = useRef(0)
+
+  const query = q.trim()
+  const searchMode = editing && dirty && query.length >= 2
 
   // 输入防抖 300ms 后请求；丢弃过期响应
   useEffect(() => {
-    const query = q.trim()
     const seq = ++seqRef.current
-    if (query.length < 2) {
+    if (!searchMode) {
       setHits([])
-      setOpen(false)
       return
     }
     const timer = window.setTimeout(() => {
@@ -48,74 +57,138 @@ function SymbolSearch({ onSelect }: { onSelect: (symbol: string) => void }) {
           if (seqRef.current !== seq) return
           setHits(res)
           setActive(0)
-          setOpen(true)
         })
         .catch(() => {
           if (seqRef.current !== seq) return
           setHits([])
-          setOpen(false)
         })
     }, 300)
     return () => window.clearTimeout(timer)
-  }, [q])
+  }, [query, searchMode])
 
-  // 点击外部关闭浮层
-  useEffect(() => {
-    const onPointerDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [])
+  /** 退出编辑态：恢复显示当前 symbol，不改值。 */
+  const close = () => {
+    seqRef.current++
+    setEditing(false)
+    setQ('')
+    setDirty(false)
+    setHits([])
+    inputRef.current?.blur()
+  }
 
   const pick = (symbol: string) => {
     onSelect(symbol)
-    // 选中后清空并收起
-    seqRef.current++
-    setQ('')
-    setHits([])
-    setOpen(false)
+    close()
+  }
+
+  const onFocus = () => {
+    setEditing(true)
+    setQ(value)
+    setDirty(false)
+    // 等受控 value 切到编辑态后再全选，便于直接输入覆盖
+    window.setTimeout(() => inputRef.current?.select(), 0)
+  }
+
+  const onBlur = (e: FocusEvent<HTMLInputElement>) => {
+    // 焦点仍在组件内（如点浮层）不收起；浮层 onMouseDown preventDefault 已保住焦点
+    if (rootRef.current?.contains(e.relatedTarget as Node)) return
+    close()
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
-      setOpen(false)
+      e.preventDefault()
+      close()
       return
     }
-    if (!open || hits.length === 0) return
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (searchMode && hits.length > 0) pick(hits[active].symbol)
+      // 远程无结果时允许直接回车提交手输代码
+      else if (dirty && query.length > 0) pick(query.toUpperCase())
+      return
+    }
+    if (!searchMode || hits.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setActive((i) => (i + 1) % hits.length)
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setActive((i) => (i - 1 + hits.length) % hits.length)
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      pick(hits[active].symbol)
     }
   }
+
+  const overlayCls =
+    'absolute left-0 top-full z-[60] mt-2 rounded-xl border border-white/10 bg-panel/95 shadow-[0_12px_40px_rgba(0,0,0,0.6),0_0_24px_rgba(34,211,238,0.1)] backdrop-blur-md'
 
   return (
     <div ref={rootRef} className="relative">
       <input
+        ref={inputRef}
         type="text"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={onKeyDown}
-        onFocus={() => {
-          if (hits.length > 0) setOpen(true)
+        value={editing ? q : value}
+        onChange={(e) => {
+          setQ(e.target.value)
+          setDirty(true)
         }}
-        placeholder="🔍 搜索代码/公司名…"
-        className="input-dark w-[200px]"
+        onFocus={onFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        placeholder="搜索代码/公司名…"
+        className={`input-dark w-[220px] pr-8 font-mono font-bold ${
+          editing ? 'text-slate-100' : 'text-neon-cyan'
+        }`}
         spellCheck={false}
         autoComplete="off"
       />
-      {open && hits.length > 0 && (
-        <ul className="absolute left-0 top-full z-[60] mt-2 max-h-80 w-[300px] overflow-y-auto rounded-xl border border-white/10 bg-panel/95 py-1 shadow-[0_12px_40px_rgba(0,0,0,0.6),0_0_24px_rgba(34,211,238,0.1)] backdrop-blur-md">
+      <span
+        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 transition-transform ${
+          editing ? 'rotate-180' : ''
+        }`}
+      >
+        ▾
+      </span>
+
+      {/* 编辑态 + 无有效查询：分组 chips 浮层 */}
+      {editing && !searchMode && (
+        <div
+          onMouseDown={(e) => e.preventDefault()}
+          className={`${overlayCls} max-h-96 w-[340px] overflow-y-auto p-3`}
+        >
+          {Object.entries(SYMBOL_GROUPS).map(([group, syms]) => (
+            <div key={group} className="mb-2.5 last:mb-0">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                {group}
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {syms.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => pick(s)}
+                    className={`rounded-md border px-2 py-0.5 font-mono text-[11px] font-semibold transition ${
+                      s === value
+                        ? 'border-cyan-400/60 bg-cyan-400/10 text-neon-cyan shadow-[0_0_8px_rgba(34,211,238,0.25)]'
+                        : 'border-white/10 text-slate-300 hover:border-cyan-400/40 hover:bg-white/5 hover:text-neon-cyan'
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 编辑态 + 输入 ≥2 字符：远程搜索结果浮层 */}
+      {searchMode && hits.length > 0 && (
+        <ul
+          onMouseDown={(e) => e.preventDefault()}
+          className={`${overlayCls} max-h-80 w-[300px] overflow-y-auto py-1`}
+        >
           {hits.map((h, i) => (
             <li key={h.symbol}>
               <button
-                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => pick(h.symbol)}
                 onMouseEnter={() => setActive(i)}
                 className={`flex w-full items-center gap-2 px-3 py-2 text-left transition ${
@@ -144,19 +217,12 @@ function SymbolSearch({ onSelect }: { onSelect: (symbol: string) => void }) {
 interface Props {
   symbol: string
   interval: string
+  /** 选中标的（App 层负责 isCrypto 时 4h → 1d 回退）。 */
   onSymbolChange: (s: string) => void
   onIntervalChange: (i: string) => void
-  /** 搜索结果选中：App 层会切换 symbol/interval 并跳回「股票分析」tab。 */
-  onSearchSelect: (s: string) => void
 }
 
-export default function TopBar({
-  symbol,
-  interval,
-  onSymbolChange,
-  onIntervalChange,
-  onSearchSelect,
-}: Props) {
+export default function TopBar({ symbol, interval, onSymbolChange, onIntervalChange }: Props) {
   const status = useWsStatus()
   const intervals = intervalsFor(symbol)
 
@@ -170,28 +236,7 @@ export default function TopBar({
       </span>
 
       <div className="ml-auto flex items-center gap-3">
-        <SymbolSearch onSelect={onSearchSelect} />
-
-        <select
-          className="select-dark font-mono"
-          value={symbol}
-          onChange={(e) => {
-            const next = e.target.value
-            onSymbolChange(next)
-            // 切到股票时 4h 不可用，回退 1d
-            if (!isCrypto(next) && interval === '4h') onIntervalChange('1d')
-          }}
-        >
-          {Object.entries(SYMBOL_GROUPS).map(([group, syms]) => (
-            <optgroup key={group} label={group}>
-              {syms.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+        <SymbolPicker value={symbol} onSelect={onSymbolChange} />
 
         <div className="flex overflow-hidden rounded-lg border border-white/10">
           {intervals.map((iv) => (
