@@ -407,6 +407,131 @@ export function fetchOptionsPaper(): Promise<OptionsPaperStatus> {
   return getJson('/opt-api/paper-options')
 }
 
+// ---------- Factor Lab (genetic factor mining) ----------
+
+/** Mining run configuration; omit a field to use the backend default. */
+export interface MineConfig {
+  population?: number
+  generations?: number
+  max_depth?: number
+  /** Forward-return horizon in days (5 / 10 / 21). */
+  horizon?: number
+  folds?: number
+  holdout_frac?: number
+  stability_lambda?: number
+  complexity_lambda?: number
+  redundancy_lambda?: number
+  top_k?: number
+  seed?: number
+  holdout_ic_floor?: number
+}
+
+export interface MineStartResponse {
+  started: boolean
+  universe: unknown
+  dates: unknown
+}
+
+/** A factor discovered in the current mining run (report view). */
+export interface MineReportFactor {
+  expression: string
+  fitness: number
+  fold_ics: number[]
+  mean_ic: number
+  icir: number
+  holdout_ic: number
+  passed_holdout: boolean
+  complexity: number
+}
+
+export interface MineReport {
+  factors: MineReportFactor[]
+  /** Best fitness per generation (evolution curve). */
+  generations_best: number[]
+  total_evaluated: number
+  /** [start_ms, end_ms] of the search window. */
+  search_dates: [number, number]
+  /** [start_ms, end_ms] of the holdout window. */
+  holdout_dates: [number, number]
+}
+
+export interface MineStatus {
+  status: 'idle' | 'running' | 'done' | 'failed'
+  started_ms?: number
+  error?: string
+  report?: MineReport
+}
+
+/** A factor persisted in the library (passed holdout validation). */
+export interface MinedFactor {
+  expression: string
+  ast: unknown
+  mean_ic: number
+  icir: number
+  holdout_ic: number
+  complexity: number
+  horizon: number
+  mined_ms: number
+}
+
+export interface FactorStrategyConfig {
+  rebalance_days?: number
+  top_frac?: number
+  cost_per_side?: number
+}
+
+export interface FactorEquityPoint {
+  time: number
+  equity: number
+}
+
+export interface FactorStrategyResult {
+  factors_used: string[]
+  metrics_full: BacktestMetrics
+  metrics_search: BacktestMetrics
+  metrics_holdout: BacktestMetrics
+  holdout_start_ms: number
+  avg_turnover: number
+  names_per_side: number
+  equity: FactorEquityPoint[]
+  note: string
+}
+
+export interface FactorForecast {
+  as_of: number
+  horizon_days: number
+  rankings: { symbol: string; score: number }[]
+  confidence: {
+    avg_holdout_ic: number
+    n_factors: number
+    interpretation: string
+  }
+}
+
+/** Kick off a mining run; backend returns 400 when one is already running. */
+export function startMine(body: { days?: number; config?: MineConfig }): Promise<MineStartResponse> {
+  return postJson('/api/mine', body)
+}
+
+export function fetchMineStatus(): Promise<MineStatus> {
+  return getJson('/api/mine/status')
+}
+
+export function fetchMinedFactors(): Promise<MinedFactor[]> {
+  return getJson('/api/factors_mined')
+}
+
+export function runFactorStrategy(body: {
+  days?: number
+  config?: FactorStrategyConfig
+}): Promise<FactorStrategyResult> {
+  return postJson('/api/factor_strategy', body)
+}
+
+export function fetchFactorForecast(): Promise<FactorForecast> {
+  return getJson('/api/factor_forecast')
+}
+
 // ---------- WS message types ----------
 
 export interface WsKlineMsg {

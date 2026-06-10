@@ -14,14 +14,16 @@ import OptionsPanel from './components/OptionsPanel'
 import { OptionPlansSection, OptionsPaperSection } from './components/OptionPlansPanel'
 import HoldingsGuide from './components/HoldingsGuide'
 import StrategiesPanel from './components/StrategiesPanel'
+import FactorLabPanel from './components/FactorLabPanel'
 
-type View = 'stocks' | 'plans' | 'positions' | 'strategies' | 'options'
+type View = 'stocks' | 'plans' | 'positions' | 'strategies' | 'factorlab' | 'options'
 
 const VIEW_TABS: { key: View; label: string; sub: string }[] = [
   { key: 'stocks', label: '股票分析', sub: 'Stocks' },
   { key: 'plans', label: '交易计划', sub: 'Plans' },
   { key: 'positions', label: '持仓', sub: 'Positions' },
   { key: 'strategies', label: '策略', sub: 'Strategies' },
+  { key: 'factorlab', label: '因子 Lab', sub: 'Factor Lab' },
   { key: 'options', label: '期权分析', sub: 'Options' },
 ]
 
@@ -89,10 +91,13 @@ export default function App() {
   const [view, setView] = useState<View>('stocks')
   // 进过一次期权页后保持挂载，避免切回时丢失已加载的链数据。
   const [optionsMounted, setOptionsMounted] = useState(false)
+  // 因子 Lab 同理懒挂载：进入后保持挂载，切走时挖掘轮询/报告状态不丢失。
+  const [factorLabMounted, setFactorLabMounted] = useState(false)
 
   const changeView = useCallback((v: View) => {
     setView(v)
     if (v === 'options') setOptionsMounted(true)
+    if (v === 'factorlab') setFactorLabMounted(true)
   }, [])
 
   // 计划卡「信号策略」联动：跳转到策略 Tab。
@@ -176,6 +181,13 @@ export default function App() {
       <div className={view === 'strategies' ? '' : 'hidden'}>
         <StrategiesPanel />
       </div>
+
+      {/* 因子 Lab：遗传规划因子挖掘实验室，懒挂载 + 隐藏不卸载 */}
+      {factorLabMounted && (
+        <div className={view === 'factorlab' ? '' : 'hidden'}>
+          <FactorLabPanel />
+        </div>
+      )}
 
       {/* 期权分析全屏页：跟随全局 symbol */}
       {optionsMounted && (
