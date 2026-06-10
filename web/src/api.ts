@@ -64,6 +64,14 @@ export interface BacktestResult {
   equity: EquityPoint[]
 }
 
+/** Optional transaction-cost model for backtests. Omit to use asset-class defaults. */
+export interface CostModel {
+  fee_rate: number
+  slippage: number
+  min_fee_usd: number
+  capital_usd: number
+}
+
 export interface PopulationMember {
   spec: StrategySpec
   valid_metrics: BacktestMetrics
@@ -173,6 +181,57 @@ export interface SectorReport {
   sectors: SectorStat[]
 }
 
+// ---------- Options chain (moomoo OpenD sidecar, /opt-api) ----------
+
+export interface OptionRow {
+  code: string
+  type: 'call' | 'put'
+  strike: number
+  last: number | null
+  volume: number | null
+  open_interest: number | null
+  /** Implied vol, already in percent units (23.6 = 23.6%). */
+  iv: number | null
+  delta: number | null
+  gamma: number | null
+  theta: number | null
+  vega: number | null
+}
+
+export interface OptionChainAnalysis {
+  pcr_volume: number | null
+  pcr_oi: number | null
+  max_pain: number | null
+  atm_iv_call: number | null
+  atm_iv_put: number | null
+  skew_25d: number | null
+  total_oi_call: number | null
+  total_oi_put: number | null
+}
+
+export interface OptionChain {
+  symbol: string
+  expiry: string
+  spot: number
+  rows: OptionRow[]
+  analysis: OptionChainAnalysis | null
+}
+
+export interface ExpirationsResponse {
+  symbol: string
+  expirations: string[]
+}
+
+export function fetchOptionExpirations(symbol: string): Promise<ExpirationsResponse> {
+  return getJson(`/opt-api/expirations?symbol=${encodeURIComponent(symbol)}`)
+}
+
+export function fetchOptionChain(symbol: string, expiry: string): Promise<OptionChain> {
+  return getJson(
+    `/opt-api/chain?symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(expiry)}`,
+  )
+}
+
 // ---------- WS message types ----------
 
 export interface WsKlineMsg {
@@ -256,8 +315,9 @@ export function runBacktest(
   interval: string,
   days: number,
   spec: StrategySpec,
+  cost?: CostModel,
 ): Promise<BacktestResult> {
-  return postJson('/api/backtest', { symbol, interval, days, spec })
+  return postJson('/api/backtest', { symbol, interval, days, spec, ...(cost ? { cost } : {}) })
 }
 
 export function startEvolve(

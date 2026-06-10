@@ -12,6 +12,7 @@ import {
   fmtNum,
   fmtPct,
   type BacktestResult,
+  type CostModel,
   type SpecKind,
   type StrategySpec,
 } from '../api'
@@ -72,6 +73,42 @@ const SPEC_FORMS: Record<FormSpecKind, { label: string; fields: FieldDef[]; defa
   },
 }
 
+// ---------- 成本模型预设 ----------
+
+type CostPresetKey = 'auto' | 'moomoo_us' | 'crypto_taker' | 'small_scalp' | 'custom'
+
+const COST_PRESETS: Record<CostPresetKey, { label: string; cost: CostModel | null }> = {
+  auto: { label: '自动（按资产类别）', cost: null },
+  moomoo_us: {
+    label: 'moomoo 美股',
+    cost: { fee_rate: 0.00002, slippage: 0.0003, min_fee_usd: 0, capital_usd: 10000 },
+  },
+  crypto_taker: {
+    label: '加密 taker',
+    cost: { fee_rate: 0.001, slippage: 0.0005, min_fee_usd: 0, capital_usd: 10000 },
+  },
+  small_scalp: {
+    label: '短线小资金',
+    cost: { fee_rate: 0.00002, slippage: 0.0005, min_fee_usd: 1, capital_usd: 5000 },
+  },
+  custom: { label: '自定义', cost: null },
+}
+
+const COST_FIELDS: { name: keyof CostModel; label: string; step: number }[] = [
+  { name: 'fee_rate', label: 'Fee Rate', step: 0.00001 },
+  { name: 'slippage', label: 'Slippage', step: 0.0001 },
+  { name: 'min_fee_usd', label: 'Min Fee $', step: 0.5 },
+  { name: 'capital_usd', label: 'Capital $', step: 1000 },
+]
+
+/** 指标网格旁的成本假设说明文字。 */
+function costNote(preset: CostPresetKey, cost: CostModel | undefined): string {
+  if (preset === 'auto' || !cost) return '成本假设: 自动（按资产类别默认）'
+  return `成本假设: ${COST_PRESETS[preset].label} · fee ${(cost.fee_rate * 100).toFixed(4)}% · slip ${(
+    cost.slippage * 100
+  ).toFixed(3)}% · min $${cost.min_fee_usd} · 本金 $${cost.capital_usd.toLocaleString('en-US')}`
+}
+
 function Metric({
   label,
   value,
@@ -100,6 +137,24 @@ export default function BacktestPanel({ symbol, interval }: Props) {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [costOpen, setCostOpen] = useState(false)
+  const [costPreset, setCostPreset] = useState<CostPresetKey>('auto')
+  const [customCost, setCustomCost] = useState<CostModel>({
+    fee_rate: 0.00002,
+    slippage: 0.0003,
+    min_fee_usd: 0,
+    capital_usd: 10000,
+  })
+  // 上次回测实际使用的成本（用于指标旁注明）。
+  const [usedCost, setUsedCost] = useState<{ preset: CostPresetKey; cost?: CostModel } | null>(null)
+
+  const effectiveCost: CostModel | undefined =
+    costPreset === 'auto'
+      ? undefined
+      : costPreset === 'custom'
+        ? customCost
+        : (COST_PRESETS[costPreset].cost ?? undefined)
+
   const chartDivRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const equityRef = useRef<ISeriesApi<'Area'> | null>(null)
@@ -114,8 +169,9 @@ export default function BacktestPanel({ symbol, interval }: Props) {
     setError(null)
     try {
       const spec = { kind, ...params } as unknown as StrategySpec
-      const res = await runBacktest(symbol, interval, 365, spec)
+      const res = await runBacktest(symbol, interval, 365, spec, effectiveCost)
       setResult(res)
+      setUsedCost({ preset: costPreset, cost: effectiveCost })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -214,6 +270,68 @@ export default function BacktestPanel({ symbol, interval }: Props) {
         </button>
       </div>
 
+      {/* 成本模型折叠区 */}
+      <div className="mb-3 rounded-xl border border-white/5 bg-white/[0.02]">
+        <button
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-400 transition hover:text-neon-cyan"
+          onClick={() => setCostOpen((o) => !o)}
+        >
+          <span className="font-mono text-[10px]">{costOpen ? '▼' : '▶'}</span>
+          成本模型
+          <span className="ml-auto font-mono text-[10px] font-normal text-slate-500">
+            {COST_PRESETS[costPreset].label}
+          </span>
+        </button>
+
+        {costOpen && (
+          <div className="flex flex-wrap items-end gap-3 border-t border-white/5 px-3 py-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500">预设</span>
+              <select
+                className="select-dark"
+                value={costPreset}
+                onChange={(e) => setCostPreset(e.target.value as CostPresetKey)}
+              >
+                {(Object.keys(COST_PRESETS) as CostPresetKey[]).map((k) => (
+                  <option key={k} value={k}>
+                    {COST_PRESETS[k].label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {costPreset === 'custom' &&
+              COST_FIELDS.map((f) => (
+                <label key={f.name} className="flex w-28 flex-col gap-1">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                    {f.label}
+                  </span>
+                  <input
+                    type="number"
+                    step={f.step}
+                    min={0}
+                    className="input-dark font-mono"
+                    value={customCost[f.name]}
+                    onChange={(e) =>
+                      setCustomCost((prev) => ({ ...prev, [f.name]: Number(e.target.value) }))
+                    }
+                  />
+                </label>
+              ))}
+
+            {costPreset !== 'custom' && (
+              <p className="self-center font-mono text-[11px] text-slate-500">
+                {effectiveCost
+                  ? `fee ${(effectiveCost.fee_rate * 100).toFixed(4)}% · slip ${(
+                      effectiveCost.slippage * 100
+                    ).toFixed(3)}% · min $${effectiveCost.min_fee_usd} · 本金 $${effectiveCost.capital_usd.toLocaleString('en-US')}`
+                  : '不传 cost，由后端按资产类别选择默认成本。'}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
       {error && (
         <p className="mb-2 rounded-lg border border-neon-red/40 bg-neon-red/10 px-3 py-2 text-xs text-neon-red">
           {error}
@@ -222,6 +340,11 @@ export default function BacktestPanel({ symbol, interval }: Props) {
 
       {result && m && (
         <>
+          {usedCost && (
+            <p className="mb-2 font-mono text-[10px] text-slate-500">
+              {costNote(usedCost.preset, usedCost.cost)}
+            </p>
+          )}
           <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
             <Metric label="Sharpe" value={fmtNum(m.sharpe)} tone={signTone(m.sharpe)} />
             <Metric label="Annual Return" value={fmtPct(m.annual_return)} tone={signTone(m.annual_return)} />
