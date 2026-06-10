@@ -218,16 +218,13 @@ pub async fn evolve_status(State(state): State<Arc<AppState>>) -> impl IntoRespo
 }
 
 pub async fn champion(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let champ = state.champion.lock().unwrap().clone();
-    Json(champ)
+    let champs = state.champions.lock().unwrap().clone();
+    Json(champs)
 }
 
 pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let sess = state.paper.lock().unwrap().clone();
-    match sess {
-        Some(s) => Json(json!({"active": true, "session": s})),
-        None => Json(json!({"active": false})),
-    }
+    let sessions = state.paper.lock().unwrap().clone();
+    Json(json!({"active": !sessions.is_empty(), "sessions": sessions}))
 }
 
 pub async fn ws_handler(

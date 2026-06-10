@@ -6,6 +6,7 @@ use qdata::KlineStore;
 use qevolve::EvolveReport;
 use qstrategy::StrategySpec;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tokio::sync::broadcast;
@@ -26,13 +27,20 @@ pub enum WsMessage {
     },
     /// 模拟盘净值标记
     Paper {
+        key: String,
+        symbol: String,
+        interval: String,
         time: i64,
         equity: f64,
         position: f64,
         price: f64,
     },
     /// 模拟盘调仓事件
-    PaperTrade(crate::paper::PaperTrade),
+    PaperTrade {
+        key: String,
+        symbol: String,
+        trade: crate::paper::PaperTrade,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -61,38 +69,55 @@ pub enum EvolveStatus {
     Failed { error: String },
 }
 
+/// 注册表键：`"SYMBOL|interval"`，如 `"SPY|1d"`
+pub fn champ_key(symbol: &str, interval: &str) -> String {
+    format!("{symbol}|{interval}")
+}
+
 pub struct AppState {
     pub store: KlineStore,
     pub ws_tx: broadcast::Sender<WsMessage>,
     pub evolve_status: Mutex<EvolveStatus>,
-    pub champion: Mutex<ChampionRecord>,
+    /// 多槽冠军注册表：每个 symbol|interval 一个冠军
+    pub champions: Mutex<HashMap<String, ChampionRecord>>,
     pub champion_path: PathBuf,
-    pub paper: Mutex<Option<crate::paper::PaperSession>>,
+    /// 每个冠军一个模拟盘会话，键同注册表
+    pub paper: Mutex<HashMap<String, crate::paper::PaperSession>>,
 }
 
 impl AppState {
     pub fn new(data_dir: &str) -> Result<Self> {
         let store = KlineStore::new(data_dir)?;
         let (ws_tx, _) = broadcast::channel(8192);
-        let champion_path = PathBuf::from(data_dir).join("champion.json");
-        let champion = if champion_path.exists() {
+        let champion_path = PathBuf::from(data_dir).join("champions.json");
+        let legacy_path = PathBuf::from(data_dir).join("champion.json");
+        let champions: HashMap<String, ChampionRecord> = if champion_path.exists() {
             serde_json::from_str(&std::fs::read_to_string(&champion_path)?)?
+        } else if legacy_path.exists() {
+            // 旧单槽格式迁移
+            let rec: ChampionRecord =
+                serde_json::from_str(&std::fs::read_to_string(&legacy_path)?)?;
+            if rec.spec.is_some() && !rec.symbol.is_empty() {
+                HashMap::from([(champ_key(&rec.symbol, &rec.interval), rec)])
+            } else {
+                HashMap::new()
+            }
         } else {
-            ChampionRecord::default()
+            HashMap::new()
         };
         Ok(Self {
             store,
             ws_tx,
             evolve_status: Mutex::new(EvolveStatus::Idle),
-            champion: Mutex::new(champion),
+            champions: Mutex::new(champions),
             champion_path,
-            paper: Mutex::new(None),
+            paper: Mutex::new(HashMap::new()),
         })
     }
 
-    pub fn save_champion(&self) {
-        let rec = self.champion.lock().unwrap().clone();
-        if let Ok(json) = serde_json::to_string_pretty(&rec) {
+    pub fn save_champions(&self) {
+        let map = self.champions.lock().unwrap().clone();
+        if let Ok(json) = serde_json::to_string_pretty(&map) {
             let _ = std::fs::write(&self.champion_path, json);
         }
     }
@@ -129,23 +154,21 @@ pub fn launch_evolve(
         started_ms: now_ms(),
     };
     tokio::task::spawn_blocking(move || {
+        let key = champ_key(&symbol, &interval_s);
         let incumbent = {
-            let champ = state.champion.lock().unwrap();
-            if champ.symbol == symbol && champ.interval == interval_s {
-                champ.spec.clone()
-            } else {
-                None
-            }
+            let champs = state.champions.lock().unwrap();
+            champs.get(&key).and_then(|c| c.spec.clone())
         };
         match qevolve::evolve(&klines, &cfg, incumbent.as_ref()) {
             Ok(report) => {
                 if report.promoted {
-                    let mut champ = state.champion.lock().unwrap();
-                    champ.spec = Some(report.champion.spec.clone());
-                    champ.symbol = symbol;
-                    champ.interval = interval_s;
-                    champ.updated_ms = now_ms();
-                    champ.lineage.push(LineageEntry {
+                    let mut champs = state.champions.lock().unwrap();
+                    let rec = champs.entry(key).or_default();
+                    rec.spec = Some(report.champion.spec.clone());
+                    rec.symbol = symbol;
+                    rec.interval = interval_s;
+                    rec.updated_ms = now_ms();
+                    rec.lineage.push(LineageEntry {
                         spec: report.champion.spec.clone(),
                         holdout_sharpe: report
                             .champion
@@ -154,8 +177,8 @@ pub fn launch_evolve(
                             .map_or(0.0, |m| m.sharpe),
                         promoted_ms: now_ms(),
                     });
-                    drop(champ);
-                    state.save_champion();
+                    drop(champs);
+                    state.save_champions();
                 }
                 let _ = state.ws_tx.send(WsMessage::EvolveDone {
                     promoted: report.promoted,

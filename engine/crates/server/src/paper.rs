@@ -1,18 +1,25 @@
-//! 实时模拟盘（paper trading）引擎。
+//! 实时模拟盘（paper trading）引擎——多会话版。
 //!
-//! 把冠军策略接到实时行情上：
+//! 注册表中每个冠军（symbol|interval 槽位）各开一个会话：
 //! - 价格标记：订阅实时成交，按最新价 mark-to-market，节流推送净值点
-//! - 调仓：每 30s 检查冠军周期是否有新收盘bar，有则重算信号，
+//!   （股票暂无实时流，会话只在新日线收盘时更新）
+//! - 调仓：每 30s 检查各冠军周期是否有新收盘bar，有则重算信号，
 //!   仓位变化按最新价成交并扣手续费+滑点（与回测同一成本模型）
-//! - 冠军热更新：每个检查周期都对比注册表，冠军变了就重启会话
+//! - 冠军热更新：spec 变了就重置对应会话；冠军被移除则关会话
 
-use crate::state::{now_ms, AppState, WsMessage};
+use crate::state::{champ_key, now_ms, AppState, WsMessage};
 use qcore::{EquityPoint, Interval};
 use qstrategy::StrategySpec;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// 信号重算所需历史bar数（最大 lookback 200 + 热身余量）
+const HISTORY_BARS: i64 = 500;
+/// 净值点推送节流（毫秒）
+const MARK_THROTTLE_MS: i64 = 3000;
+const MAX_CURVE_POINTS: usize = 5000;
 
 fn cost_per_unit_turnover(symbol: &str) -> f64 {
     // 与回测同一成本模型（crate::routes::market_params）
@@ -22,11 +29,6 @@ fn cost_per_unit_turnover(symbol: &str) -> f64 {
         0.0001 + 0.0002
     }
 }
-/// 信号重算所需历史bar数（最大 lookback 200 + 热身余量）
-const HISTORY_BARS: i64 = 500;
-/// 净值点推送节流（毫秒）
-const MARK_THROTTLE_MS: i64 = 3000;
-const MAX_CURVE_POINTS: usize = 5000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PaperTrade {
@@ -56,7 +58,7 @@ pub struct PaperSession {
 
 /// 启动模拟盘引擎（两个任务：价格标记 + 调仓检查）
 pub fn start_paper_engine(state: Arc<AppState>) {
-    // 任务1：实时价格 mark-to-market
+    // 任务1：实时价格 mark-to-market（命中所有同 symbol 的会话）
     let st = state.clone();
     tokio::spawn(async move {
         let mut rx = st.ws_tx.subscribe();
@@ -70,18 +72,19 @@ pub fn start_paper_engine(state: Arc<AppState>) {
             else {
                 continue;
             };
-            let update = {
+            let mut updates: Vec<WsMessage> = Vec::new();
+            {
                 let mut guard = st.paper.lock().unwrap();
-                let Some(sess) = guard.as_mut() else { continue };
-                if sess.symbol != symbol || sess.last_price <= 0.0 {
-                    continue;
-                }
-                // 增量 mark：equity *= 1 + pos × 价格变化率
-                sess.equity *= 1.0 + sess.position * (price / sess.last_price - 1.0);
-                sess.last_price = price;
-                if time - sess.last_push_ms < MARK_THROTTLE_MS {
-                    None
-                } else {
+                for (key, sess) in guard.iter_mut() {
+                    if sess.symbol != symbol || sess.last_price <= 0.0 {
+                        continue;
+                    }
+                    // 增量 mark：equity *= 1 + pos × 价格变化率
+                    sess.equity *= 1.0 + sess.position * (price / sess.last_price - 1.0);
+                    sess.last_price = price;
+                    if time - sess.last_push_ms < MARK_THROTTLE_MS {
+                        continue;
+                    }
                     sess.last_push_ms = time;
                     let pt = EquityPoint {
                         time,
@@ -93,16 +96,19 @@ pub fn start_paper_engine(state: Arc<AppState>) {
                     while sess.curve.len() > MAX_CURVE_POINTS {
                         sess.curve.pop_front();
                     }
-                    Some(pt)
+                    updates.push(WsMessage::Paper {
+                        key: key.clone(),
+                        symbol: sess.symbol.clone(),
+                        interval: sess.interval.clone(),
+                        time: pt.time,
+                        equity: pt.equity,
+                        position: pt.position,
+                        price: pt.price,
+                    });
                 }
-            };
-            if let Some(pt) = update {
-                let _ = st.ws_tx.send(WsMessage::Paper {
-                    time: pt.time,
-                    equity: pt.equity,
-                    position: pt.position,
-                    price: pt.price,
-                });
+            }
+            for u in updates {
+                let _ = st.ws_tx.send(u);
             }
         }
     });
@@ -121,25 +127,51 @@ pub fn start_paper_engine(state: Arc<AppState>) {
 }
 
 async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
-    // 读取当前冠军
-    let (symbol, interval_s, spec) = {
-        let champ = state.champion.lock().unwrap();
-        match (&champ.spec, champ.symbol.as_str()) {
-            (Some(spec), s) if !s.is_empty() => {
-                (champ.symbol.clone(), champ.interval.clone(), spec.clone())
-            }
-            _ => return Ok(()), // 冠军空缺，不开模拟盘
-        }
+    // 注册表快照
+    let champions: Vec<(String, String, String, StrategySpec)> = {
+        let champs = state.champions.lock().unwrap();
+        champs
+            .iter()
+            .filter_map(|(key, rec)| {
+                rec.spec
+                    .as_ref()
+                    .map(|s| (key.clone(), rec.symbol.clone(), rec.interval.clone(), s.clone()))
+            })
+            .collect()
     };
-    let Some(interval) = Interval::parse(&interval_s) else {
+
+    // 冠军被移除的会话清理
+    {
+        let mut guard = state.paper.lock().unwrap();
+        let live: Vec<String> = champions.iter().map(|(k, ..)| k.clone()).collect();
+        guard.retain(|k, _| live.contains(k));
+    }
+
+    for (key, symbol, interval_s, spec) in champions {
+        if let Err(e) = rebalance_one(state, &key, &symbol, &interval_s, &spec).await {
+            tracing::warn!(key, error = %e, "paper rebalance failed for session");
+        }
+    }
+    Ok(())
+}
+
+async fn rebalance_one(
+    state: &Arc<AppState>,
+    key: &str,
+    symbol: &str,
+    interval_s: &str,
+    spec: &StrategySpec,
+) -> anyhow::Result<()> {
+    debug_assert_eq!(key, champ_key(symbol, interval_s));
+    let Some(interval) = Interval::parse(interval_s) else {
         anyhow::bail!("bad champion interval: {interval_s}");
     };
 
-    // 冠军变更或会话不存在 → 重置会话
+    // 会话不存在或 spec 变更 → 重置
     let needs_init = {
         let guard = state.paper.lock().unwrap();
-        match guard.as_ref() {
-            Some(s) => s.symbol != symbol || s.interval != interval_s || s.spec != spec,
+        match guard.get(key) {
+            Some(s) => s.spec != *spec,
             None => true,
         }
     };
@@ -149,7 +181,7 @@ async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
     let end = now_ms();
     let mut klines = state
         .store
-        .get(&symbol, interval, end - HISTORY_BARS * step, end)
+        .get(symbol, interval, end - HISTORY_BARS * step * 2, end)
         .await?;
     // 丢掉未收盘的当前bar
     klines.retain(|k| k.open_time + step <= end);
@@ -164,25 +196,50 @@ async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
     {
         let mut guard = state.paper.lock().unwrap();
         if needs_init {
-            tracing::info!(symbol, interval_s, "paper session (re)started for champion");
-            *guard = Some(PaperSession {
-                symbol: symbol.clone(),
-                interval: interval_s.clone(),
-                spec: spec.clone(),
-                started_ms: end,
-                equity: 1.0,
-                position: target,
-                last_price: last.close,
-                last_bar_open: last.open_time,
-                last_push_ms: 0,
-                curve: VecDeque::new(),
-                trades: Vec::new(),
-            });
+            tracing::info!(key, "paper session (re)started for champion");
+            guard.insert(
+                key.to_string(),
+                PaperSession {
+                    symbol: symbol.to_string(),
+                    interval: interval_s.to_string(),
+                    spec: spec.clone(),
+                    started_ms: end,
+                    equity: 1.0,
+                    position: target,
+                    last_price: last.close,
+                    last_bar_open: last.open_time,
+                    last_push_ms: 0,
+                    curve: VecDeque::new(),
+                    trades: Vec::new(),
+                },
+            );
         }
-        let sess = guard.as_mut().unwrap();
-        // 新收盘bar → 执行信号
+        let sess = guard.get_mut(key).unwrap();
+        // 新收盘bar → 执行信号（股票无实时流时也在此用收盘价 mark）
         if last.open_time > sess.last_bar_open {
             sess.last_bar_open = last.open_time;
+            // 用新bar收盘价 mark（对无实时流的股票这是唯一的价格更新点）
+            if sess.last_price > 0.0 {
+                sess.equity *= 1.0 + sess.position * (last.close / sess.last_price - 1.0);
+            }
+            sess.last_price = last.close;
+            let pt = EquityPoint {
+                time: end,
+                equity: sess.equity,
+                position: sess.position,
+                price: last.close,
+            };
+            sess.curve.push_back(pt);
+            events.push(WsMessage::Paper {
+                key: key.to_string(),
+                symbol: sess.symbol.clone(),
+                interval: sess.interval.clone(),
+                time: pt.time,
+                equity: pt.equity,
+                position: pt.position,
+                price: pt.price,
+            });
+
             let turnover = (target - sess.position).abs();
             if turnover > 1e-9 {
                 let cost = turnover * cost_per_unit_turnover(&sess.symbol);
@@ -195,9 +252,13 @@ async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
                     cost,
                 };
                 sess.position = target;
-                events.push(WsMessage::PaperTrade(trade.clone()));
+                events.push(WsMessage::PaperTrade {
+                    key: key.to_string(),
+                    symbol: sess.symbol.clone(),
+                    trade: trade.clone(),
+                });
                 sess.trades.push(trade);
-                tracing::info!(symbol, target, "paper rebalanced");
+                tracing::info!(key, target, "paper rebalanced");
             }
         }
     }
