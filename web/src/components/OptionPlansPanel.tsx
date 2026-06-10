@@ -446,12 +446,7 @@ export function OptionsPaperSection() {
 
 // ---------- combined panel ----------
 
-/** 期权交易计划区：计划卡 + 期权模拟盘两段。 */
+/** 期权交易计划区：仅计划卡（期权模拟盘已移至「持仓」页）。 */
 export default function OptionPlansPanel() {
-  return (
-    <div className="flex flex-col gap-4">
-      <OptionPlansSection />
-      <OptionsPaperSection />
-    </div>
-  )
+  return <OptionPlansSection />
 }

@@ -11,13 +11,15 @@ import SectorPanel from './components/SectorPanel'
 import PaperPanel from './components/PaperPanel'
 import TradeFeed from './components/TradeFeed'
 import OptionsPanel from './components/OptionsPanel'
-import OptionPlansPanel from './components/OptionPlansPanel'
+import { OptionPlansSection, OptionsPaperSection } from './components/OptionPlansPanel'
+import HoldingsGuide from './components/HoldingsGuide'
 
-type View = 'stocks' | 'plans' | 'options'
+type View = 'stocks' | 'plans' | 'positions' | 'options'
 
 const VIEW_TABS: { key: View; label: string; sub: string }[] = [
   { key: 'stocks', label: '股票分析', sub: 'Stocks' },
   { key: 'plans', label: '交易计划', sub: 'Plans' },
+  { key: 'positions', label: '持仓', sub: 'Positions' },
   { key: 'options', label: '期权分析', sub: 'Options' },
 ]
 
@@ -146,15 +148,23 @@ export default function App() {
           <TradePlanPanel />
           {/* All champion slots across symbol/interval pairs. */}
           <ChampionRegistry />
-          {/* Paper trading follows the champion slots, not the selected symbol. */}
-          <PaperPanel />
         </section>
 
-        {/* 大区二：期权交易计划（计划卡 + 期权模拟盘） */}
+        {/* 大区二：期权交易计划（计划卡；模拟盘见「持仓」页） */}
         <section className="flex flex-col gap-4">
           <PlanSectionHeader tone="purple" title="🎯 期权交易计划" sub="Option Trade Plans" />
-          <OptionPlansPanel />
+          <OptionPlansSection />
         </section>
+      </div>
+
+      {/* 持仓页：退出指引 + 股票模拟盘 + 期权模拟盘，隐藏而非卸载 */}
+      <div className={`flex flex-col gap-4 ${view === 'positions' ? '' : 'hidden'}`}>
+        {/* 所有持仓的动态退出参数总览，置顶全宽。 */}
+        <HoldingsGuide />
+        {/* Paper trading follows the champion slots, not the selected symbol. */}
+        <PaperPanel />
+        {/* 期权模拟盘（从交易计划页迁入）。 */}
+        <OptionsPaperSection />
       </div>
 
       {/* 期权分析全屏页：跟随全局 symbol */}
