@@ -157,6 +157,116 @@ impl Acc {
     }
 }
 
+/// 单标的专属统计：任意 symbol（含加密币）× 任意周期，按需计算。
+/// 与全宇宙版相同口径，但不设 MIN_SYM_N 过滤（n≥3 即输出，前端自行提示小样本）。
+#[derive(Serialize)]
+pub struct SymbolStatsResponse {
+    pub symbol: String,
+    pub interval: String,
+    pub window_days: i64,
+    pub n_bars: usize,
+    pub bin_edges: &'static [f64],
+    pub total_buy: DistStat,
+    pub total_sell: DistStat,
+    pub rules: Vec<RuleStat>,
+}
+
+pub async fn compute_symbol(
+    state: &AppState,
+    interval_str: &str,
+    symbol: &str,
+) -> anyhow::Result<SymbolStatsResponse> {
+    let interval = Interval::parse(interval_str)
+        .ok_or_else(|| anyhow::anyhow!("bad interval {interval_str}"))?;
+    // 股票数据源无 2h/4h；加密币（Binance）支持
+    anyhow::ensure!(
+        qdata::is_crypto(symbol) || !matches!(interval, Interval::H2 | Interval::H4),
+        "股票数据源不支持 2h/4h 周期的统计"
+    );
+    let days = window_days(interval_str);
+    let end = now_ms();
+    let start = end - days * 86_400_000;
+    let ks = state.store.get(symbol, interval, start, end).await?;
+    anyhow::ensure!(ks.len() > 60, "{symbol} 在该周期下数据不足（{}根bar）", ks.len());
+
+    let ta = crate::ta::build(&ks, None);
+    let idx: HashMap<i64, usize> = ta.times.iter().enumerate().map(|(i, t)| (*t, i)).collect();
+    let c: Vec<f64> = ks.iter().map(|k| k.close).collect();
+    let n = c.len();
+
+    let mut rule_acc: HashMap<String, Acc> = Default::default();
+    let (mut all_buy, mut all_sell) = (Vec::new(), Vec::new());
+    for sig in &ta.classic_signals {
+        let Some(&i) = idx.get(&sig.time) else { continue };
+        if i + HORIZON >= n {
+            continue;
+        }
+        let side: &'static str = if sig.side == "buy" { "buy" } else { "sell" };
+        let dir = if sig.side == "buy" { 1.0 } else { -1.0 };
+        let mut day_rets = [0.0f64; HORIZON];
+        let (mut peak, mut peak_day) = (f64::MIN, 1usize);
+        for d in 1..=HORIZON {
+            let r = dir * (c[i + d] / c[i] - 1.0);
+            day_rets[d - 1] = r;
+            if r > peak {
+                peak = r;
+                peak_day = d;
+            }
+        }
+        let r10 = day_rets[HEADLINE - 1];
+        if side == "buy" {
+            all_buy.push(r10);
+        } else {
+            all_sell.push(r10);
+        }
+        for rule in &sig.rules {
+            rule_acc.entry(rule.clone()).or_default().push(side, &day_rets, peak_day);
+        }
+    }
+
+    let mut rules: Vec<RuleStat> = rule_acc
+        .into_iter()
+        .filter(|(_, a)| a.rets10.len() >= 3)
+        .map(|(rule, mut a)| {
+            let nf = a.rets10.len() as f64;
+            let curve: Vec<f64> = a.curve_sum.iter().map(|s| s / nf).collect();
+            let best_day = curve
+                .iter()
+                .enumerate()
+                .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
+                .map(|(i, _)| i + 1)
+                .unwrap_or(1);
+            let exp_tp_day = a.tp_day_sum / nf;
+            let side = a.side;
+            let d = dist(&mut a.rets10);
+            RuleStat {
+                rule,
+                side,
+                n: d.n,
+                win10: d.win10,
+                avg10: d.avg10,
+                med10: d.med10,
+                best_day,
+                exp_tp_day,
+                curve,
+                hist: d.hist,
+            }
+        })
+        .collect();
+    rules.sort_by(|x, y| y.avg10.partial_cmp(&x.avg10).unwrap());
+
+    Ok(SymbolStatsResponse {
+        symbol: symbol.to_string(),
+        interval: interval_str.to_string(),
+        window_days: days,
+        n_bars: n,
+        bin_edges: BIN_EDGES,
+        total_buy: dist(&mut all_buy),
+        total_sell: dist(&mut all_sell),
+        rules,
+    })
+}
+
 /// 全宇宙跑信号 + 三级聚合。数据已在本地缓存时纯 CPU。
 pub async fn compute(state: &AppState, interval_str: &str) -> anyhow::Result<TaStatsResponse> {
     let interval = Interval::parse(interval_str)

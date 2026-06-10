@@ -10,7 +10,7 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts'
-import { fetchKlines, fetchTa, fetchTaStats, fmtNum, toUnixSec, type DistStat, type Kline, type TaResponse, type TaRuleStat, type TaStatsResponse } from '../api'
+import { fetchKlines, fetchSymbolTaStats, fetchTa, fetchTaStats, fmtNum, toUnixSec, type DistStat, type Kline, type SymbolStatsResponse, type TaResponse, type TaRuleStat, type TaStatsResponse } from '../api'
 
 interface Props {
   symbol: string
@@ -225,6 +225,9 @@ export default function TechPanel({ symbol, interval }: Props) {
 
   const [ta, setTa] = useState<TaResponse | null>(null)
   const [stats, setStats] = useState<TaStatsResponse | null>(null)
+  // 当前标的专属统计（任意标的含加密币，按需计算）
+  const [symStats, setSymStats] = useState<SymbolStatsResponse | null>(null)
+  const [symStatsErr, setSymStatsErr] = useState<string | null>(null)
   const [statScope, setStatScope] = useState<'uni' | 'sym'>('uni')
   const statsRef = useRef<Map<string, TaRuleStat>>(new Map())
   // 当前标的的规则级统计（rule → stat），hover 提示"本标的"行用
@@ -488,14 +491,26 @@ export default function TechPanel({ symbol, interval }: Props) {
     }
   }, [interval])
 
-  // 当前标的的规则级统计映射（tooltip 的"本标的"行）
+  // 当前标的专属统计：换标的/周期即重算（服务端按 interval|symbol 缓存6h）
   useEffect(() => {
-    symStatsRef.current = new Map(
-      (stats?.symbol_rules ?? [])
-        .filter((r) => r.symbol === symbol)
-        .map((r) => [r.rule, { win10: r.win10, avg10: r.avg10, n: r.n }]),
-    )
-  }, [stats, symbol])
+    let cancelled = false
+    setSymStats(null)
+    setSymStatsErr(null)
+    symStatsRef.current = new Map()
+    fetchSymbolTaStats(symbol, interval)
+      .then((s) => {
+        if (cancelled) return
+        symStatsRef.current = new Map(s.rules.map((r) => [r.rule, { win10: r.win10, avg10: r.avg10, n: r.n }]))
+        setSymStats(s)
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setSymStatsErr(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [symbol, interval])
 
   const trendNow = ta ? TREND_LABEL[ta.trend[ta.trend.length - 1] ?? 0] : null
   const rsiNow = ta ? lastVal(ta.rsi14) : null
@@ -741,16 +756,21 @@ export default function TechPanel({ symbol, interval }: Props) {
             {/* 总概率分布卡片：全宇宙或当前标的的买/卖两方向 */}
             <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-2">
               {(() => {
-                const st = statScope === 'sym' ? stats.symbol_totals.find((s) => s.symbol === symbol) : null
-                const buy = statScope === 'sym' ? st?.buy : stats.total_buy
-                const sell = statScope === 'sym' ? st?.sell : stats.total_sell
-                const tag = statScope === 'sym' ? symbol : '全宇宙'
-                if (!buy || !sell)
+                if (statScope === 'sym' && symStatsErr)
                   return (
-                    <p className="col-span-full py-2 text-center text-xs text-slate-500">
-                      {symbol} 不在统计宇宙内（仅覆盖美股/ETF）
+                    <p className="col-span-full py-2 text-center text-xs text-amber-400/80">
+                      {symbol} 该周期暂无统计：{symStatsErr}
                     </p>
                   )
+                if (statScope === 'sym' && !symStats)
+                  return (
+                    <p className="col-span-full py-2 text-center text-xs text-slate-500">
+                      {symbol} 专属统计计算中…
+                    </p>
+                  )
+                const buy = statScope === 'sym' ? symStats!.total_buy : stats.total_buy
+                const sell = statScope === 'sym' ? symStats!.total_sell : stats.total_sell
+                const tag = statScope === 'sym' ? `${symbol}（${symStats!.n_bars}根bar）` : '全宇宙'
                 return (
                   <>
                     <DistCard title={`▲ ${tag} · 全部买入信号总分布`} d={buy} cls="text-neon-green" />
@@ -770,14 +790,11 @@ export default function TechPanel({ symbol, interval }: Props) {
                     <th className="px-2 py-1.5 font-medium">E·10d</th>
                     <th className="px-2 py-1.5 font-medium">止盈日</th>
                     <th className="px-2 py-1.5 text-center font-medium">10d分布</th>
-                    {statScope === 'uni' && <th className="px-2 py-1.5 text-center font-medium">期望路径</th>}
+                    <th className="px-2 py-1.5 text-center font-medium">期望路径</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(statScope === 'uni'
-                    ? stats.rules
-                    : stats.symbol_rules.filter((r) => r.symbol === symbol)
-                  ).map((r) => {
+                  {(statScope === 'uni' ? stats.rules : (symStats?.rules ?? [])).map((r) => {
                     const pos = r.avg10 >= 0
                     return (
                       <tr key={r.rule} className="border-t border-white/5 hover:bg-white/5">
@@ -799,20 +816,16 @@ export default function TechPanel({ symbol, interval }: Props) {
                         <td className="px-2 py-1">
                           <div className="flex justify-center"><HistThumb hist={r.hist} /></div>
                         </td>
-                        {statScope === 'uni' && 'curve' in r && (
-                          <td className="px-2 py-1">
-                            <div className="flex justify-center"><CurveThumb curve={(r as TaRuleStat).curve} /></div>
-                          </td>
-                        )}
+                        <td className="px-2 py-1">
+                          <div className="flex justify-center"><CurveThumb curve={r.curve} /></div>
+                        </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
-              {statScope === 'sym' && stats.symbol_rules.filter((r) => r.symbol === symbol).length === 0 && (
-                <p className="py-3 text-center text-xs text-slate-500">
-                  该标的无 n≥8 的规则样本（上市时间短或不在统计宇宙）
-                </p>
+              {statScope === 'sym' && symStats && symStats.rules.length === 0 && (
+                <p className="py-3 text-center text-xs text-slate-500">该标的该周期无 n≥3 的规则样本</p>
               )}
             </div>
           </>

@@ -271,6 +271,22 @@ export function fetchTaStats(interval = '1d'): Promise<TaStatsResponse> {
   return getJson(`/api/ta/stats?interval=${interval}`)
 }
 
+/** Single-symbol rule stats (any symbol incl. crypto, any interval). */
+export interface SymbolStatsResponse {
+  symbol: string
+  interval: string
+  window_days: number
+  n_bars: number
+  bin_edges: number[]
+  total_buy: DistStat
+  total_sell: DistStat
+  rules: TaRuleStat[]
+}
+
+export function fetchSymbolTaStats(symbol: string, interval: string): Promise<SymbolStatsResponse> {
+  return getJson(`/api/ta/stats?interval=${interval}&symbol=${symbol}`)
+}
+
 // ---------- Trade plans ----------
 
 export interface TradePlan {

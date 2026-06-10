@@ -722,6 +722,8 @@ pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoR
 pub struct TaStatsQuery {
     #[serde(default = "default_stats_interval")]
     interval: String,
+    /// 提供时返回该标的专属统计（任意标的含加密币）
+    symbol: Option<String>,
 }
 fn default_stats_interval() -> String {
     "1d".into()
@@ -732,21 +734,35 @@ pub async fn ta_stats(
     State(state): State<Arc<AppState>>,
     Query(q): Query<TaStatsQuery>,
 ) -> AppResult<impl IntoResponse> {
+    let cache_key = match &q.symbol {
+        Some(sym) => format!("{}|{}", q.interval, sym.to_uppercase()),
+        None => q.interval.clone(),
+    };
     {
         let cache = state.ta_stats_cache.lock().unwrap();
-        if let Some((ts, val)) = cache.get(&q.interval) {
+        if let Some((ts, val)) = cache.get(&cache_key) {
             if now_ms() - ts < crate::ta_stats::CACHE_TTL_MS {
                 return Ok(Json(val.clone()));
             }
         }
     }
-    let report = crate::ta_stats::compute(&state, &q.interval).await.map_err(bad)?;
-    let val = serde_json::to_value(&report).map_err(internal)?;
+    let val = match &q.symbol {
+        Some(sym) => {
+            let r = crate::ta_stats::compute_symbol(&state, &q.interval, &sym.to_uppercase())
+                .await
+                .map_err(bad)?;
+            serde_json::to_value(&r).map_err(internal)?
+        }
+        None => {
+            let r = crate::ta_stats::compute(&state, &q.interval).await.map_err(bad)?;
+            serde_json::to_value(&r).map_err(internal)?
+        }
+    };
     state
         .ta_stats_cache
         .lock()
         .unwrap()
-        .insert(q.interval.clone(), (now_ms(), val.clone()));
+        .insert(cache_key, (now_ms(), val.clone()));
     Ok(Json(val))
 }
 
