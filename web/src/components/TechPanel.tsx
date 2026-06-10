@@ -10,7 +10,7 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts'
-import { fetchKlines, fetchTa, fetchTaStats, fmtNum, toUnixSec, type TaResponse, type TaRuleStat, type TaStatsResponse } from '../api'
+import { fetchKlines, fetchTa, fetchTaStats, fmtNum, toUnixSec, type DistStat, type TaResponse, type TaRuleStat, type TaStatsResponse } from '../api'
 
 interface Props {
   symbol: string
@@ -112,19 +112,20 @@ function buildSigMap(ta: TaResponse) {
 }
 
 /** 10日收益分布缩略图：左5箱(≤0)红、右5箱(>0)绿。 */
-function HistThumb({ hist }: { hist: number[] }) {
+function HistThumb({ hist, big = false }: { hist: number[]; big?: boolean }) {
   const max = Math.max(...hist, 1)
-  const w = 6
+  const w = big ? 9 : 6
   const gap = 1
+  const H = big ? 40 : 26
   return (
-    <svg width={hist.length * (w + gap)} height={26} className="shrink-0">
+    <svg width={hist.length * (w + gap)} height={H} className="shrink-0">
       {hist.map((v, i) => {
-        const h = Math.max(1, (v / max) * 24)
+        const h = Math.max(1, (v / max) * (H - 2))
         return (
           <rect
             key={i}
             x={i * (w + gap)}
-            y={26 - h}
+            y={H - h}
             width={w}
             height={h}
             rx={1}
@@ -134,6 +135,27 @@ function HistThumb({ hist }: { hist: number[] }) {
         )
       })}
     </svg>
+  )
+}
+
+/** 总分布卡片：方向 n/胜率/期望/中位 + 大号直方图。 */
+function DistCard({ title, d, cls }: { title: string; d: DistStat; cls: string }) {
+  const e = d.avg10 * 100
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+      <div>
+        <p className={`text-xs font-bold ${cls}`}>{title}</p>
+        <p className="font-mono text-sm font-bold text-slate-200">
+          E {e >= 0 ? '+' : ''}
+          {e.toFixed(2)}%
+          <span className="ml-2 text-xs font-medium text-slate-400">
+            胜率 {(d.win10 * 100).toFixed(1)}% · 中位 {(d.med10 * 100).toFixed(2)}%
+          </span>
+        </p>
+        <p className="text-[10px] text-slate-500">n = {d.n.toLocaleString()}（10日符号化收益）</p>
+      </div>
+      <HistThumb hist={d.hist} big />
+    </div>
   )
 }
 
@@ -182,7 +204,10 @@ export default function TechPanel({ symbol, interval }: Props) {
 
   const [ta, setTa] = useState<TaResponse | null>(null)
   const [stats, setStats] = useState<TaStatsResponse | null>(null)
+  const [statScope, setStatScope] = useState<'uni' | 'sym'>('uni')
   const statsRef = useRef<Map<string, TaRuleStat>>(new Map())
+  // 当前标的的规则级统计（rule → stat），hover 提示"本标的"行用
+  const symStatsRef = useRef<Map<string, { win10: number; avg10: number; n: number }>>(new Map())
   const [classicMode, setClassicMode] = useState<ClassicMode>('lite')
   const [showChampion, setShowChampion] = useState(true)
   const [showEma, setShowEma] = useState(false)
@@ -270,7 +295,11 @@ export default function TechPanel({ symbol, interval }: Props) {
                     const st = statsRef.current.get(r)
                     if (!st) return ''
                     const e = st.avg10 * 100
-                    return `<div style="color:#64748b;padding-left:14px;line-height:1.4">${r}: 胜率${(st.win10 * 100).toFixed(0)}% · E10d ${e >= 0 ? '+' : ''}${e.toFixed(1)}% · 止盈~${st.exp_tp_day.toFixed(0)}d (n=${st.n})</div>`
+                    const sy = symStatsRef.current.get(r)
+                    const symPart = sy
+                      ? ` · 本标的 ${(sy.win10 * 100).toFixed(0)}%/${sy.avg10 >= 0 ? '+' : ''}${(sy.avg10 * 100).toFixed(1)}% (n=${sy.n})`
+                      : ''
+                    return `<div style="color:#64748b;padding-left:14px;line-height:1.4">${r}: 胜率${(st.win10 * 100).toFixed(0)}% · E10d ${e >= 0 ? '+' : ''}${e.toFixed(1)}% · 止盈~${st.exp_tp_day.toFixed(0)}d (n=${st.n})${symPart}</div>`
                   })
                   .join('')
               : ''
@@ -404,6 +433,15 @@ export default function TechPanel({ symbol, interval }: Props) {
     }
   }, [])
 
+  // 当前标的的规则级统计映射（tooltip 的"本标的"行）
+  useEffect(() => {
+    symStatsRef.current = new Map(
+      (stats?.symbol_rules ?? [])
+        .filter((r) => r.symbol === symbol)
+        .map((r) => [r.rule, { win10: r.win10, avg10: r.avg10, n: r.n }]),
+    )
+  }, [stats, symbol])
+
   const trendNow = ta ? TREND_LABEL[ta.trend[ta.trend.length - 1] ?? 0] : null
   const rsiNow = ta ? lastVal(ta.rsi14) : null
   const adxNow = ta ? lastVal(ta.adx) : null
@@ -511,77 +549,126 @@ export default function TechPanel({ symbol, interval }: Props) {
         </div>
       </div>
 
-      {/* 规则统计：52标的×10年历史，每条规则的胜率/期望/止盈周期 + 分布与期望缩略图 */}
+      {/* 规则统计：53标的×20年历史，总分布 + 按规则 / 按规则×当前标的 两档 */}
       <div className="mt-1">
-        <p className="text-[10px] uppercase tracking-widest text-slate-500">
-          规则统计 · Rule Stats{' '}
-          {stats && (
-            <span className="normal-case tracking-normal">
-              （{stats.symbols}标的 · {(stats.events / 1000).toFixed(1)}k 信号事件 · 10年日线）
-            </span>
-          )}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] uppercase tracking-widest text-slate-500">
+            规则统计 · Rule Stats{' '}
+            {stats && (
+              <span className="normal-case tracking-normal">
+                （{stats.symbols}标的 · {(stats.events / 1000).toFixed(0)}k 信号事件 · {stats.years}年日线）
+              </span>
+            )}
+          </p>
+          <div className="flex overflow-hidden rounded-full border border-white/10 text-xs font-bold">
+            {(
+              [
+                ['uni', '全宇宙'],
+                ['sym', `当前标的 ${symbol}`],
+              ] as ['uni' | 'sym', string][]
+            ).map(([sc, label]) => (
+              <button
+                key={sc}
+                onClick={() => setStatScope(sc)}
+                className={`px-3 py-1 transition ${
+                  statScope === sc ? 'bg-neon-cyan/15 text-neon-cyan' : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="mb-1 text-[11px] leading-snug text-slate-500">
           口径：信号后10个交易日的符号化收益（卖出信号=做空视角，跌了才算赢）；止盈日 =
-          20日内收益峰值出现日的均值；分布图 = 10日收益直方图（红≤0 / 绿&gt;0，±2.5%分箱），
-          曲线图 = 持有1-20日的期望收益路径。
+          20日内收益峰值出现日的均值；直方图 = 10日收益分布（红≤0 / 绿&gt;0，±2.5%分箱）。
           <span className="text-amber-400/80">
-            样本跨标的同期相关且窗口重叠，且本宇宙为10年长牛成长股——卖出信号做空期望普遍为负是
-            样本偏置的体现，仅供参考。
+            同一规则在不同个股上期望差异巨大（如九买：PLTR +7.7% vs COIN -0.9%），
+            全体均值仅是先验，请结合"当前标的"档查看；样本跨标的同期相关且窗口重叠，仅供参考。
           </span>
         </p>
         {!stats ? (
           <p className="py-3 text-center text-xs text-slate-500">统计计算中（首次约10秒）…</p>
         ) : (
-          <div className="max-h-[420px] overflow-y-auto rounded-lg border border-white/5">
-            <table className="w-full text-right text-[11px] tabular-nums">
-              <thead className="sticky top-0 bg-panel/95 text-slate-500 backdrop-blur">
-                <tr>
-                  <th className="px-2 py-1.5 text-left font-medium">规则</th>
-                  <th className="px-2 py-1.5 font-medium">n</th>
-                  <th className="px-2 py-1.5 font-medium">胜率</th>
-                  <th className="px-2 py-1.5 font-medium">E·10d</th>
-                  <th className="px-2 py-1.5 font-medium">中位</th>
-                  <th className="px-2 py-1.5 font-medium">最优持有</th>
-                  <th className="px-2 py-1.5 font-medium">止盈日</th>
-                  <th className="px-2 py-1.5 text-center font-medium">10d分布</th>
-                  <th className="px-2 py-1.5 text-center font-medium">期望路径</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.rules.map((r) => {
-                  const pos = r.avg10 >= 0
+          <>
+            {/* 总概率分布卡片：全宇宙或当前标的的买/卖两方向 */}
+            <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+              {(() => {
+                const st = statScope === 'sym' ? stats.symbol_totals.find((s) => s.symbol === symbol) : null
+                const buy = statScope === 'sym' ? st?.buy : stats.total_buy
+                const sell = statScope === 'sym' ? st?.sell : stats.total_sell
+                const tag = statScope === 'sym' ? symbol : '全宇宙'
+                if (!buy || !sell)
                   return (
-                    <tr key={r.rule} className="border-t border-white/5 hover:bg-white/5">
-                      <td className="px-2 py-1 text-left">
-                        <span className={r.side === 'buy' ? 'text-neon-green' : 'text-neon-red'}>
-                          {r.side === 'buy' ? '▲' : '▼'}
-                        </span>{' '}
-                        <span className="text-slate-200">{r.rule}</span>
-                      </td>
-                      <td className={`px-2 py-1 ${r.n < 100 ? 'text-slate-600' : 'text-slate-400'}`}>{r.n}</td>
-                      <td className={`px-2 py-1 ${r.win10 >= 0.55 ? 'text-neon-green' : r.win10 < 0.45 ? 'text-neon-red' : 'text-slate-300'}`}>
-                        {(r.win10 * 100).toFixed(1)}%
-                      </td>
-                      <td className={`px-2 py-1 font-bold ${pos ? 'text-neon-green' : 'text-neon-red'}`}>
-                        {pos ? '+' : ''}
-                        {(r.avg10 * 100).toFixed(2)}%
-                      </td>
-                      <td className="px-2 py-1 text-slate-400">{(r.med10 * 100).toFixed(2)}%</td>
-                      <td className="px-2 py-1 text-slate-400">{r.best_day}d</td>
-                      <td className="px-2 py-1 text-slate-400">{r.exp_tp_day.toFixed(1)}d</td>
-                      <td className="px-2 py-1">
-                        <div className="flex justify-center"><HistThumb hist={r.hist} /></div>
-                      </td>
-                      <td className="px-2 py-1">
-                        <div className="flex justify-center"><CurveThumb curve={r.curve} /></div>
-                      </td>
-                    </tr>
+                    <p className="col-span-full py-2 text-center text-xs text-slate-500">
+                      {symbol} 不在统计宇宙内（仅覆盖美股/ETF）
+                    </p>
                   )
-                })}
-              </tbody>
-            </table>
-          </div>
+                return (
+                  <>
+                    <DistCard title={`▲ ${tag} · 全部买入信号总分布`} d={buy} cls="text-neon-green" />
+                    <DistCard title={`▼ ${tag} · 全部卖出信号总分布（做空视角）`} d={sell} cls="text-neon-red" />
+                  </>
+                )
+              })()}
+            </div>
+
+            <div className="max-h-[420px] overflow-y-auto rounded-lg border border-white/5">
+              <table className="w-full text-right text-[11px] tabular-nums">
+                <thead className="sticky top-0 bg-panel/95 text-slate-500 backdrop-blur">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-medium">规则</th>
+                    <th className="px-2 py-1.5 font-medium">n</th>
+                    <th className="px-2 py-1.5 font-medium">胜率</th>
+                    <th className="px-2 py-1.5 font-medium">E·10d</th>
+                    <th className="px-2 py-1.5 font-medium">止盈日</th>
+                    <th className="px-2 py-1.5 text-center font-medium">10d分布</th>
+                    {statScope === 'uni' && <th className="px-2 py-1.5 text-center font-medium">期望路径</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(statScope === 'uni'
+                    ? stats.rules
+                    : stats.symbol_rules.filter((r) => r.symbol === symbol)
+                  ).map((r) => {
+                    const pos = r.avg10 >= 0
+                    return (
+                      <tr key={r.rule} className="border-t border-white/5 hover:bg-white/5">
+                        <td className="px-2 py-1 text-left">
+                          <span className={r.side === 'buy' ? 'text-neon-green' : 'text-neon-red'}>
+                            {r.side === 'buy' ? '▲' : '▼'}
+                          </span>{' '}
+                          <span className="text-slate-200">{r.rule}</span>
+                        </td>
+                        <td className={`px-2 py-1 ${r.n < 100 ? 'text-slate-600' : 'text-slate-400'}`}>{r.n}</td>
+                        <td className={`px-2 py-1 ${r.win10 >= 0.55 ? 'text-neon-green' : r.win10 < 0.45 ? 'text-neon-red' : 'text-slate-300'}`}>
+                          {(r.win10 * 100).toFixed(1)}%
+                        </td>
+                        <td className={`px-2 py-1 font-bold ${pos ? 'text-neon-green' : 'text-neon-red'}`}>
+                          {pos ? '+' : ''}
+                          {(r.avg10 * 100).toFixed(2)}%
+                        </td>
+                        <td className="px-2 py-1 text-slate-400">{r.exp_tp_day.toFixed(1)}d</td>
+                        <td className="px-2 py-1">
+                          <div className="flex justify-center"><HistThumb hist={r.hist} /></div>
+                        </td>
+                        {statScope === 'uni' && 'curve' in r && (
+                          <td className="px-2 py-1">
+                            <div className="flex justify-center"><CurveThumb curve={(r as TaRuleStat).curve} /></div>
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {statScope === 'sym' && stats.symbol_rules.filter((r) => r.symbol === symbol).length === 0 && (
+                <p className="py-3 text-center text-xs text-slate-500">
+                  该标的无 n≥8 的规则样本（上市时间短或不在统计宇宙）
+                </p>
+              )}
+            </div>
+          </>
         )}
       </div>
 

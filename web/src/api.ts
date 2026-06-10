@@ -221,14 +221,48 @@ export interface TaRuleStat {
   hist: number[]
 }
 
+/** Distribution summary of signed 10-day returns for one bucket of events. */
+export interface DistStat {
+  n: number
+  win10: number
+  avg10: number
+  med10: number
+  hist: number[]
+}
+
+/** Per (rule, symbol) stats — no mean curve, histogram only. */
+export interface SymbolRuleStat {
+  symbol: string
+  rule: string
+  side: 'buy' | 'sell'
+  n: number
+  win10: number
+  avg10: number
+  exp_tp_day: number
+  hist: number[]
+}
+
+export interface SymbolTotal {
+  symbol: string
+  buy: DistStat
+  sell: DistStat
+}
+
 export interface TaStatsResponse {
   computed_ms: number
   symbols: number
   events: number
+  years: number
   horizon: number
   headline: number
   bin_edges: number[]
+  /** Universe-wide distribution by signal direction. */
+  total_buy: DistStat
+  total_sell: DistStat
   rules: TaRuleStat[]
+  symbol_totals: SymbolTotal[]
+  /** Rule×symbol rows with n >= 8. */
+  symbol_rules: SymbolRuleStat[]
 }
 
 /** First call computes over the full universe (~10s); cached 6h server-side after. */
