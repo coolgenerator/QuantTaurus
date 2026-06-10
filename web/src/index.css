@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-ink text-slate-200 antialiased;
+    background-image:
+      radial-gradient(1200px 600px at 80% -10%, rgba(167, 139, 250, 0.08), transparent 60%),
+      radial-gradient(1000px 500px at 0% 0%, rgba(34, 211, 238, 0.07), transparent 55%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-white/10;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/20;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .glass-card:hover {
+    border-color: rgba(34, 211, 238, 0.35);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.35),
+      0 0 24px rgba(34, 211, 238, 0.12),
+      0 0 60px rgba(167, 139, 250, 0.08);
+  }
+  .neon-title {
+    @apply bg-gradient-to-r from-neon-cyan via-sky-400 to-neon-purple bg-clip-text font-extrabold text-transparent;
+  }
+  .panel-title {
+    @apply text-sm font-semibold uppercase tracking-widest text-slate-400;
+  }
+  .select-dark {
+    @apply rounded-lg border border-white/10 bg-panel px-3 py-1.5 text-sm text-slate-200 outline-none transition;
+  }
+  .select-dark:hover,
+  .select-dark:focus {
+    @apply border-neon-cyan/50;
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.2);
+  }
+  .input-dark {
+    @apply w-full rounded-lg border border-white/10 bg-panel px-3 py-1.5 text-sm text-slate-200 outline-none transition;
+  }
+  .input-dark:focus {
+    @apply border-neon-purple/60;
+    box-shadow: 0 0 12px rgba(167, 139, 250, 0.25);
+  }
+  .btn-neon {
+    @apply relative rounded-xl bg-gradient-to-r from-cyan-500 to-violet-500 px-5 py-2 text-sm font-bold text-white transition;
+    box-shadow: 0 0 18px rgba(34, 211, 238, 0.25);
+  }
+  .btn-neon:hover:not(:disabled) {
+    box-shadow:
+      0 0 28px rgba(34, 211, 238, 0.45),
+      0 0 50px rgba(167, 139, 250, 0.3);
+    transform: translateY(-1px);
+  }
+  .btn-neon:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold;
+  }
+}
