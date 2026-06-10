@@ -210,11 +210,72 @@ pub fn build(
         map.entry(i).or_default().push(rule);
     }
 
+    // 批次2：唐奇安通道（前20日高低，不含当根）+ 20日均量，给突破类规则用
+    let h: Vec<f64> = klines.iter().map(|k| k.high).collect();
+    let l: Vec<f64> = klines.iter().map(|k| k.low).collect();
+    let vol: Vec<f64> = klines.iter().map(|k| k.volume).collect();
+    const DONCH: usize = 20;
+    let mut donch_up = vec![f64::NAN; n];
+    let mut donch_dn = vec![f64::NAN; n];
+    let mut vol_ma = vec![f64::NAN; n];
+    for i in DONCH..n {
+        donch_up[i] = h[i - DONCH..i].iter().cloned().fold(f64::MIN, f64::max);
+        donch_dn[i] = l[i - DONCH..i].iter().cloned().fold(f64::MAX, f64::min);
+        vol_ma[i] = qfactors::mean(&vol[i - DONCH..i]);
+    }
+    // 多头/空头排列：三均线齐序
+    let aligned = |i: usize| -> i8 {
+        if !ma20[i].is_finite() || !ma50[i].is_finite() || !ma200[i].is_finite() {
+            0
+        } else if ma20[i] > ma50[i] && ma50[i] > ma200[i] {
+            1
+        } else if ma20[i] < ma50[i] && ma50[i] < ma200[i] {
+            -1
+        } else {
+            0
+        }
+    };
+
     // 经典规则信号：逐 bar 收集命中规则，按 buy/sell 各聚合为一个信号
     let mut classic_signals = Vec::new();
+    // 唐奇安冷却：趋势内连续新高会反复触发，同向 10 根 bar 内只标第一次
+    let (mut donch_buy_at, mut donch_sell_at) = (isize::MIN / 2, isize::MIN / 2);
     for i in 1..n {
         let mut buys: Vec<String> = Vec::new();
         let mut sells: Vec<String> = Vec::new();
+
+        // 均线金叉/死叉（MA20×MA50）
+        if ma20[i - 1].is_finite() && ma50[i - 1].is_finite() && ma20[i].is_finite() && ma50[i].is_finite() {
+            if ma20[i - 1] <= ma50[i - 1] && ma20[i] > ma50[i] {
+                buys.push("均线金叉(20/50)".into());
+            } else if ma20[i - 1] >= ma50[i - 1] && ma20[i] < ma50[i] {
+                sells.push("均线死叉(20/50)".into());
+            }
+        }
+        // 多头/空头排列成立（状态翻转点才标，避免趋势中连续刷屏）
+        match (aligned(i - 1), aligned(i)) {
+            (a, 1) if a != 1 => buys.push("多头排列成立".into()),
+            (a, -1) if a != -1 => sells.push("空头排列成立".into()),
+            _ => {}
+        }
+        // 唐奇安20日突破（海龟入场口径；只标穿越那根）
+        if donch_up[i].is_finite() && donch_up[i - 1].is_finite() {
+            if c[i] > donch_up[i] && c[i - 1] <= donch_up[i - 1] && i as isize - donch_buy_at >= 10 {
+                donch_buy_at = i as isize;
+                if vol[i] > 2.0 * vol_ma[i] {
+                    buys.push("放量突破20日高".into());
+                } else {
+                    buys.push("唐奇安20日上破".into());
+                }
+            } else if c[i] < donch_dn[i] && c[i - 1] >= donch_dn[i - 1] && i as isize - donch_sell_at >= 10 {
+                donch_sell_at = i as isize;
+                if vol[i] > 2.0 * vol_ma[i] {
+                    sells.push("放量跌破20日低".into());
+                } else {
+                    sells.push("唐奇安20日下破".into());
+                }
+            }
+        }
 
         // MACD 柱穿零轴
         if hist[i - 1].is_finite() && hist[i].is_finite() {
@@ -401,6 +462,22 @@ mod tests {
         ind[25] = 30.0;
         let out = divergences(&close, &ind, 4, 60, "X");
         assert!(out.iter().any(|(i, side, r)| *i == 29 && *side == "sell" && r == "X顶背离"));
+    }
+
+    #[test]
+    fn donchian_breakout_fires_on_cross_bar() {
+        // 30 根横盘后跳涨：突破前20日高点的那根应给出唐奇安上破买点
+        let mut closes = vec![100.0; 30];
+        closes.push(110.0);
+        closes.extend(vec![110.5; 5]);
+        let ks = fake_klines(&closes);
+        let r = build(&ks, None);
+        let hit = r
+            .classic_signals
+            .iter()
+            .find(|s| s.rules.iter().any(|x| x.contains("唐奇安20日上破") || x.contains("放量突破")));
+        assert!(hit.is_some(), "expected donchian breakout signal");
+        assert_eq!(hit.unwrap().time, 30 * 86_400_000);
     }
 
     #[test]
