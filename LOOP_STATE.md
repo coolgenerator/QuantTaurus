@@ -16,12 +16,19 @@
 - [x] P8b 4h 周期 BTC/ETH 实验（见下方发现）
 - [x] P8c 自动再训练调度器（QHH_AUTORETRAIN_HOURS 默认6h，0=关；SYMBOL/INTERVAL/DAYS 可配）
 - [x] P8d 晋升绝对底线 promotion_floor（留出 Sharpe ≤0 永不晋升，宁缺毋滥；champion.json 已清空重置）
-- [ ] P9 策略质量继续迭代（核心难题：留出窗 regime shift）：
-      a. 1d 周期 + 长回看 TSMOM/vol-managed（文献最稳的组合）多标的实验
-      b. 冠军改为 top-k 多样化组合（ensemble 平均仓位）而非单一参数点
-      c. 适应度直接用 DSR；折窗改为跨整个历史散布（非连续）
-      d. 考虑 3-4 年数据（穿越多个牛熊）
-- [ ] P10 打磨：README 完善、回测报告导出、前端展示 fold_sharpes
+- [x] P9 策略质量迭代完成：
+      a. 折散布全历史（evolve v3）：4h 高 Sharpe 幻象消失（折均值跌到 ~0.5），
+         证明之前是 regime 拟合 → 4h 在 0.15% 成本下无净边际
+      b. Ensemble 冠军（StrategySpec::Ensemble，top-k 跨家族等权）
+      c. 1d 实验（4 年、3 标的）：✅ SOLUSDT 1d ensemble 通过全部闸门晋升
+         （4折全正 [0.62,1.65,1.63,0.51]，holdout Sharpe +0.48 / 年化+26%）
+         BTC -0.06 / ETH -0.31 接近但未达 floor，未晋升（正确）
+      d. 前端展示 fold_sharpes 徽章
+- [ ] P10 实盘模拟（paper trading）：把注册表冠军接到实时 WS 流上，
+      live 信号 → 模拟仓位 → 实时净值曲线推到前端新面板（核心卖点）
+- [ ] P11 打磨：README 完善（含 P9 实验结论）、champion 注册表改多槽
+      （按 symbol+interval 各存一个冠军）、回测报告导出
+- [ ] P12 可选：更多种子/更长历史重跑 BTC/ETH；资金费率 carry 数据源
 
 ## 当前进度备注
 
