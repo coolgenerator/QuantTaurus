@@ -11,10 +11,11 @@ import PaperPanel from './components/PaperPanel'
 import TradeFeed from './components/TradeFeed'
 import OptionsPanel from './components/OptionsPanel'
 
-type View = 'dashboard' | 'options'
+type View = 'stocks' | 'plans' | 'options'
 
 const VIEW_TABS: { key: View; label: string; sub: string }[] = [
-  { key: 'dashboard', label: '总览', sub: 'Dashboard' },
+  { key: 'stocks', label: '股票分析', sub: 'Stocks' },
+  { key: 'plans', label: '交易计划', sub: 'Plans' },
   { key: 'options', label: '期权分析', sub: 'Options' },
 ]
 
@@ -50,7 +51,7 @@ function ViewTabs({ view, onChange }: { view: View; onChange: (v: View) => void 
 export default function App() {
   const [symbol, setSymbol] = useState('BTCUSDT')
   const [interval, setInterval] = useState('1h')
-  const [view, setView] = useState<View>('dashboard')
+  const [view, setView] = useState<View>('stocks')
   // 进过一次期权页后保持挂载，避免切回时丢失已加载的链数据。
   const [optionsMounted, setOptionsMounted] = useState(false)
 
@@ -68,6 +69,15 @@ export default function App() {
     [interval],
   )
 
+  // 顶栏搜索选中：切换标的 + 自动跳回「股票分析」页。
+  const handleSearchSelect = useCallback(
+    (s: string) => {
+      handleSelectSymbol(s)
+      setView('stocks')
+    },
+    [handleSelectSymbol],
+  )
+
   return (
     <div className="mx-auto flex max-w-[1500px] flex-col gap-4 p-4">
       <TopBar
@@ -75,13 +85,14 @@ export default function App() {
         interval={interval}
         onSymbolChange={setSymbol}
         onIntervalChange={setInterval}
+        onSearchSelect={handleSearchSelect}
       />
 
       <ViewTabs view={view} onChange={changeView} />
 
-      {/* 总览仪表盘：隐藏而非卸载，保留图表与面板状态 */}
+      {/* 股票分析页：隐藏而非卸载，保留图表与面板状态 */}
       <main
-        className={`grid grid-cols-1 gap-4 xl:grid-cols-3 ${view === 'dashboard' ? '' : 'hidden'}`}
+        className={`grid grid-cols-1 gap-4 xl:grid-cols-3 ${view === 'stocks' ? '' : 'hidden'}`}
       >
         <div className="xl:col-span-2">
           <PriceChart symbol={symbol} interval={interval} />
@@ -94,25 +105,24 @@ export default function App() {
         <EvolvePanel symbol={symbol} interval={interval} />
 
         <div className="xl:col-span-3">
-          {/* 今日交易计划：方向/仓位/反转价/倒计时，用户最关心的面板。 */}
-          <TradePlanPanel />
-        </div>
-
-        <div className="xl:col-span-3">
-          {/* All champion slots across symbol/interval pairs. */}
-          <ChampionRegistry />
-        </div>
-
-        <div className="xl:col-span-3">
           {/* 板块轮动热点分析，点选成分股联动主图。 */}
           <SectorPanel onSelectSymbol={handleSelectSymbol} />
         </div>
-
-        <div className="xl:col-span-3">
-          {/* Paper trading follows the champion slots, not the selected symbol. */}
-          <PaperPanel />
-        </div>
       </main>
+
+      <div className={view === 'stocks' ? '' : 'hidden'}>
+        <TradeFeed symbol={symbol} />
+      </div>
+
+      {/* 交易计划页：全宽堆叠，同样隐藏而非卸载 */}
+      <div className={`flex flex-col gap-4 ${view === 'plans' ? '' : 'hidden'}`}>
+        {/* 今日交易计划：方向/仓位/反转价/倒计时，用户最关心的面板。 */}
+        <TradePlanPanel />
+        {/* All champion slots across symbol/interval pairs. */}
+        <ChampionRegistry />
+        {/* Paper trading follows the champion slots, not the selected symbol. */}
+        <PaperPanel />
+      </div>
 
       {/* 期权分析全屏页 */}
       {optionsMounted && (
@@ -120,10 +130,6 @@ export default function App() {
           <OptionsPanel />
         </div>
       )}
-
-      <div className={view === 'dashboard' ? '' : 'hidden'}>
-        <TradeFeed symbol={symbol} />
-      </div>
 
       <footer className="pb-2 text-center text-xs text-slate-600">
         QuantHaHa · for research only · not financial advice

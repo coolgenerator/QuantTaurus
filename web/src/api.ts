@@ -165,6 +165,20 @@ export function fetchTradePlans(): Promise<TradePlan[]> {
   return getJson('/api/plan')
 }
 
+// ---------- Symbol search ----------
+
+export interface SearchHit {
+  symbol: string
+  name: string
+  exchange: string
+  quote_type: 'EQUITY' | 'ETF' | 'INDEX'
+}
+
+/** Yahoo symbol search; backend returns [] when q is shorter than 2 chars. */
+export function searchSymbols(q: string): Promise<SearchHit[]> {
+  return getJson(`/api/search?q=${encodeURIComponent(q)}`)
+}
+
 // ---------- Sector rotation ----------
 
 export interface TickerStat {
