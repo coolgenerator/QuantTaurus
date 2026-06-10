@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   createChart,
   ColorType,
@@ -10,7 +10,7 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts'
-import { fetchKlines, fetchTa, fetchTaStats, fmtNum, toUnixSec, type DistStat, type TaResponse, type TaRuleStat, type TaStatsResponse } from '../api'
+import { fetchKlines, fetchTa, fetchTaStats, fmtNum, toUnixSec, type DistStat, type Kline, type TaResponse, type TaRuleStat, type TaStatsResponse } from '../api'
 
 interface Props {
   symbol: string
@@ -213,6 +213,9 @@ export default function TechPanel({ symbol, interval }: Props) {
   const seriesRef = useRef<Record<string, ISeriesApi<'Line' | 'Candlestick' | 'Histogram'>>>({})
   const taRef = useRef<TaResponse | null>(null)
   const sigMapRef = useRef<Map<number, BarSignal[]>>(new Map())
+  // unix秒 → 原始K线（hover显示OHLCV）
+  const klineMapRef = useRef<Map<number, Kline>>(new Map())
+  const lastHoverRef = useRef<number | null>(null)
 
   const [days, setDays] = useState(() => initialDays(interval, INITIAL_DAYS))
   // 左滑加载更多：防重入 + 记录上次成功加载的 symbol|interval（区分"加载更早"与"换标的"）
@@ -231,6 +234,8 @@ export default function TechPanel({ symbol, interval }: Props) {
   const [showEma, setShowEma] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // 十字线所在bar（unix秒）；null = 未悬停（侧栏显示最新bar）
+  const [hoverTime, setHoverTime] = useState<number | null>(null)
 
   // 建图（一次）：主图 + MACD/RSI/KDJ 三副图，时间轴联动。
   useEffect(() => {
@@ -287,43 +292,31 @@ export default function TechPanel({ symbol, interval }: Props) {
     S.kdjD = kdj.addLineSeries({ color: '#22d3ee', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     S.kdjJ = kdj.addLineSeries({ color: '#c084fc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
 
-    // hover 提示：crosshair 落在有信号的 bar 上时，浮层显示当天全部信号明细
+    // hover：浮层只显示 OHLCV 基础行情；技术信号明细喂给右侧固定面板
     main.subscribeCrosshairMove((param) => {
       const tip = tipRef.current
       const wrap = mainRef.current
       if (!tip || !wrap) return
-      const sigs = param.time != null ? sigMapRef.current.get(param.time as number) : undefined
-      if (!sigs?.length || !param.point) {
+      const t = param.time != null ? (param.time as number) : null
+      if (t !== lastHoverRef.current) {
+        lastHoverRef.current = t
+        setHoverTime(t) // 右侧明细面板跟随十字线
+      }
+      const k = t !== null ? klineMapRef.current.get(t) : undefined
+      if (!k || !param.point) {
         tip.style.display = 'none'
         return
       }
-      const date = new Date((param.time as number) * 1000).toISOString().slice(0, 10)
+      const d = new Date(t! * 1000)
+      const date = d.toISOString().slice(0, 10) + (k.open_time % 86_400_000 !== 0 ? ' ' + d.toISOString().slice(11, 16) : '')
+      const chg = ((k.close - k.open) / k.open) * 100
+      const vol = k.volume >= 1e9 ? (k.volume / 1e9).toFixed(2) + 'B' : k.volume >= 1e6 ? (k.volume / 1e6).toFixed(1) + 'M' : k.volume >= 1e3 ? (k.volume / 1e3).toFixed(1) + 'K' : k.volume.toFixed(0)
+      const cc = k.close >= k.open ? UP : DOWN
+      const nSig = sigMapRef.current.get(t!)?.length ?? 0
       tip.innerHTML =
-        `<div style="color:#64748b;font-family:monospace;margin-bottom:4px">${date}</div>` +
-        sigs
-          .map((s) => {
-            const color = s.side === 'buy' ? UP : DOWN
-            const icon = s.layer === 'champion' ? '◉' : s.side === 'buy' ? '▲' : '▼'
-            const tag = s.layer === 'champion' ? '冠军' : s.side === 'buy' ? '买' : '卖'
-            const head = `<div style="color:${color};line-height:1.5">${icon} ${tag} · ${s.rules.join(' + ')} <span style="color:#64748b">@${s.price.toFixed(2)}</span></div>`
-            // 每条规则附历史统计（52标的×10年）：胜率 / 10日期望 / 期望止盈日
-            const statLines = s.layer === 'classic'
-              ? s.rules
-                  .map((r) => {
-                    const st = statsRef.current.get(r)
-                    if (!st) return ''
-                    const e = st.avg10 * 100
-                    const sy = symStatsRef.current.get(r)
-                    const symPart = sy
-                      ? ` · 本标的 ${(sy.win10 * 100).toFixed(0)}%/${sy.avg10 >= 0 ? '+' : ''}${(sy.avg10 * 100).toFixed(1)}% (n=${sy.n})`
-                      : ''
-                    return `<div style="color:#64748b;padding-left:14px;line-height:1.4">${r}: 胜率${(st.win10 * 100).toFixed(0)}% · E10d ${e >= 0 ? '+' : ''}${e.toFixed(1)}% · 止盈~${st.exp_tp_day.toFixed(0)}d (n=${st.n})${symPart}</div>`
-                  })
-                  .join('')
-              : ''
-            return head + statLines
-          })
-          .join('')
+        `<div style="color:#64748b;font-family:monospace;margin-bottom:2px">${date}</div>` +
+        `<div style="font-family:monospace;line-height:1.5"><span style="color:#64748b">O</span> ${k.open.toFixed(2)} <span style="color:#64748b">H</span> ${k.high.toFixed(2)} <span style="color:#64748b">L</span> ${k.low.toFixed(2)} <span style="color:#64748b">C</span> <span style="color:${cc}">${k.close.toFixed(2)} (${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)</span></div>` +
+        `<div style="font-family:monospace;color:#94a3b8">Vol ${vol}${nSig ? ` · <span style=\"color:#fbbf24\">${nSig}个信号 → 右侧明细</span>` : ''}</div>`
       tip.style.display = 'block'
       const x = Math.max(4, Math.min(param.point.x + 14, wrap.clientWidth - tip.offsetWidth - 8))
       const y = Math.max(4, param.point.y - tip.offsetHeight - 12)
@@ -395,6 +388,7 @@ export default function TechPanel({ symbol, interval }: Props) {
               close: k.close,
             })),
         )
+        klineMapRef.current = new Map(klines.map((k) => [toUnixSec(k.open_time), k]))
         const t = taResp.times
         S.ma20.setData(lineData(t, taResp.ma20))
         S.ma50.setData(lineData(t, taResp.ma50))
@@ -507,6 +501,21 @@ export default function TechPanel({ symbol, interval }: Props) {
   const rsiNow = ta ? lastVal(ta.rsi14) : null
   const adxNow = ta ? lastVal(ta.adx) : null
 
+  // 右侧明细面板：十字线所在 bar（未悬停时=最新bar）的指标值与信号明细
+  const barIdx = useMemo(() => {
+    const m = new Map<number, number>()
+    ta?.times.forEach((tm, i) => m.set(toUnixSec(tm), i))
+    return m
+  }, [ta])
+  const detailTime = hoverTime ?? (ta && ta.times.length ? toUnixSec(ta.times[ta.times.length - 1]) : null)
+  const di = detailTime !== null ? barIdx.get(detailTime) : undefined
+  const detailSigs = detailTime !== null ? (sigMapRef.current.get(detailTime) ?? []) : []
+  const detailDate =
+    detailTime !== null
+      ? new Date(detailTime * 1000).toISOString().slice(0, interval === '1d' || interval === '1w' || interval === '1mo' ? 10 : 16).replace('T', ' ')
+      : ''
+  const dv = (vals: (number | null)[] | undefined) => (di !== undefined && vals ? vals[di] : null)
+
   return (
     <section className="glass-card relative flex flex-col gap-2 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -583,17 +592,90 @@ export default function TechPanel({ symbol, interval }: Props) {
 
       <p className="text-[11px] leading-snug text-slate-500">
         ▲▼ 经典信号（36种规则·六大类，<span className="text-amber-400/80">未经回测验证仅供参考</span>）：
-        精简模式只画同日多规则共振的大箭头，<span className="text-slate-300">鼠标悬停任意信号 bar
-        可看当天全部规则明细</span>。◉ 冠军 = evolve 闸门策略翻仓点。主图绿/红轨道 =
-        SuperTrend(10,3)，底部色带 = 均线趋势。
+        精简模式只画同日多规则共振的大箭头。<span className="text-slate-300">悬停K线浮层显示
+        OHLCV 基础行情，信号与统计明细在右侧 Bar 明细栏</span>。◉ 冠军 = evolve 闸门策略翻仓点。
+        主图绿/红轨道 = SuperTrend(10,3)，底部色带 = 均线趋势。
       </p>
 
-      <div className="relative">
-        <div ref={mainRef} className="h-[400px] w-full" />
-        <div
-          ref={tipRef}
-          className="pointer-events-none absolute z-20 hidden max-w-[340px] rounded-lg border border-white/10 bg-slate-900/95 px-3 py-2 text-xs shadow-xl"
-        />
+      <div className="flex gap-2">
+        <div className="relative min-w-0 flex-1">
+          <div ref={mainRef} className="h-[400px] w-full" />
+          <div
+            ref={tipRef}
+            className="pointer-events-none absolute z-20 hidden rounded-lg border border-white/10 bg-slate-900/95 px-3 py-2 text-xs shadow-xl"
+          />
+        </div>
+
+        {/* 技术明细侧栏：跟随十字线（未悬停时显示最新bar） */}
+        <aside className="hidden h-[400px] w-72 shrink-0 overflow-y-auto rounded-lg border border-white/5 bg-white/5 p-3 lg:block">
+          <p className="text-[10px] uppercase tracking-widest text-slate-500">
+            Bar 明细 {hoverTime === null && <span className="normal-case">（最新）</span>}
+          </p>
+          <p className="font-mono text-sm font-bold text-slate-200">{detailDate || '—'}</p>
+
+          {ta && di !== undefined && (
+            <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 font-mono text-[11px] text-slate-400">
+              <span>
+                趋势{' '}
+                <span className={TREND_LABEL[ta.trend[di] ?? 0].cls}>{TREND_LABEL[ta.trend[di] ?? 0].text}</span>
+              </span>
+              <span>
+                RSI <span className="text-slate-200">{fmtNum(dv(ta.rsi14), 1)}</span>
+              </span>
+              <span>
+                ADX <span className="text-slate-200">{fmtNum(dv(ta.adx), 1)}</span>
+              </span>
+              <span>
+                MACD柱 <span className="text-slate-200">{fmtNum(dv(ta.macd_hist), 2)}</span>
+              </span>
+              <span>
+                KDJ·K <span className="text-slate-200">{fmtNum(dv(ta.kdj_k), 1)}</span>
+              </span>
+              <span>
+                布林中轨 <span className="text-slate-200">{fmtNum(dv(ta.boll_mid))}</span>
+              </span>
+            </div>
+          )}
+
+          <div className="mt-2 border-t border-white/10 pt-2">
+            <p className="mb-1 text-[10px] uppercase tracking-widest text-slate-500">
+              信号 {detailSigs.length > 0 && `· ${detailSigs.length}`}
+            </p>
+            {detailSigs.length === 0 ? (
+              <p className="text-[11px] text-slate-500">该 bar 无信号（悬停其他K线查看）</p>
+            ) : (
+              detailSigs.map((s, si) => (
+                <div key={si} className="mb-2">
+                  <p className={`text-xs font-bold ${s.side === 'buy' ? 'text-neon-green' : 'text-neon-red'}`}>
+                    {s.layer === 'champion' ? '◉ 冠军' : s.side === 'buy' ? '▲ 买入' : '▼ 卖出'}{' '}
+                    <span className="font-mono font-medium text-slate-400">@{s.price.toFixed(2)}</span>
+                  </p>
+                  {s.rules.map((r) => {
+                    const st = statsRef.current.get(r)
+                    const sy = symStatsRef.current.get(r)
+                    return (
+                      <div key={r} className="mt-0.5 pl-2 text-[11px] leading-snug">
+                        <p className="text-slate-200">{r}</p>
+                        {st && (
+                          <p className="text-slate-500">
+                            全体 胜{(st.win10 * 100).toFixed(0)}% · E{st.avg10 >= 0 ? '+' : ''}
+                            {(st.avg10 * 100).toFixed(1)}% · 止盈~{st.exp_tp_day.toFixed(0)}bar (n={st.n})
+                          </p>
+                        )}
+                        {sy && (
+                          <p className="text-slate-500">
+                            本标的 胜{(sy.win10 * 100).toFixed(0)}% · E{sy.avg10 >= 0 ? '+' : ''}
+                            {(sy.avg10 * 100).toFixed(1)}% (n={sy.n})
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
       </div>
       <div className="grid grid-cols-1 gap-1">
         <div>
