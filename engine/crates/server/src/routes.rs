@@ -385,6 +385,148 @@ pub async fn factor_strategy(
     })))
 }
 
+#[derive(Deserialize)]
+pub struct UniversePlanReq {
+    /// 多/空各取几只
+    #[serde(default = "default_topk")]
+    k: usize,
+    #[serde(default = "default_plan_capital")]
+    capital_usd: f64,
+    #[serde(default = "default_true")]
+    include_shorts: bool,
+}
+fn default_topk() -> usize {
+    5
+}
+fn default_plan_capital() -> f64 {
+    10_000.0
+}
+fn default_true() -> bool {
+    true
+}
+
+/// 全池 Top-K 计划：52股票池因子排序 → 选股 → 分数/波动率加权配仓
+pub async fn universe_plan(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UniversePlanReq>,
+) -> AppResult<impl IntoResponse> {
+    let lib = crate::mine_job::load_library(&state);
+    if lib.is_empty() {
+        return Err(bad("因子库为空，先在因子Lab挖掘"));
+    }
+    let panel = crate::mine_job::build_panel(&state, 600).await.map_err(internal)?;
+    let exprs: Vec<qmine::Expr> = lib.iter().map(|f| f.ast.clone()).collect();
+    let (z, panel) = tokio::task::spawn_blocking(move || {
+        let z = qmine::combined_z(&panel, &exprs);
+        (z, panel)
+    })
+    .await
+    .map_err(internal)?;
+
+    // 最近覆盖足够的横截面日期
+    let mut t = panel.n_dates() - 1;
+    let count_at =
+        |t: usize| (0..panel.n_symbols()).filter(|s| z[*s][t].is_finite()).count();
+    while t > 0 && count_at(t) < 10 {
+        t -= 1;
+    }
+
+    // 每标的: score + 20日年化波动 + 最新收盘
+    struct Cand {
+        symbol: String,
+        score: f64,
+        vol_annual: f64,
+        last_close: f64,
+    }
+    let mut cands: Vec<Cand> = Vec::new();
+    for s in 0..panel.n_symbols() {
+        let score = z[s][t];
+        if !score.is_finite() {
+            continue;
+        }
+        let rets: Vec<f64> = panel.ret1[s][t.saturating_sub(20)..=t]
+            .iter()
+            .copied()
+            .filter(|r| r.is_finite())
+            .collect();
+        if rets.len() < 10 {
+            continue;
+        }
+        let m = rets.iter().sum::<f64>() / rets.len() as f64;
+        let sd =
+            (rets.iter().map(|r| (r - m).powi(2)).sum::<f64>() / (rets.len() as f64 - 1.0)).sqrt();
+        let last_close = panel.close[s][t];
+        if !last_close.is_finite() || sd <= 0.0 {
+            continue;
+        }
+        cands.push(Cand {
+            symbol: panel.symbols[s].clone(),
+            score,
+            vol_annual: sd * 252.0f64.sqrt(),
+            last_close,
+        });
+    }
+    cands.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+    let longs: Vec<&Cand> = cands.iter().filter(|c| c.score > 0.0).take(req.k).collect();
+    let shorts: Vec<&Cand> = if req.include_shorts {
+        cands.iter().rev().filter(|c| c.score < 0.0).take(req.k).collect()
+    } else {
+        Vec::new()
+    };
+    let (long_budget, short_budget) = if shorts.is_empty() {
+        (req.capital_usd, 0.0)
+    } else {
+        (req.capital_usd * 0.6, req.capital_usd * 0.4)
+    };
+
+    // 分数/波动率加权 + 单票 30% 上限
+    let make_picks = |side: &str, set: &[&Cand], budget: f64| -> Vec<serde_json::Value> {
+        let raw: Vec<f64> = set.iter().map(|c| c.score.abs() / c.vol_annual.max(0.05)).collect();
+        let total: f64 = raw.iter().sum();
+        // capped 权重再归一，保证预算用满且单票≤30%
+        let capped: Vec<f64> = raw.iter().map(|x| (x / total.max(1e-12)).min(0.30)).collect();
+        let norm: f64 = capped.iter().sum::<f64>().max(1e-12);
+        set.iter()
+            .zip(&capped)
+            .map(|(c, w)| {
+                let dollars = budget * w / norm;
+                let shares = (dollars / c.last_close).floor() as i64;
+                serde_json::json!({
+                    "symbol": c.symbol,
+                    "side": side,
+                    "score": c.score,
+                    "vol_annual": c.vol_annual,
+                    "weight_in_side": w / norm,
+                    "dollars": dollars,
+                    "shares": shares,
+                    "last_close": c.last_close,
+                    "option_hint": if side == "long" {
+                        format!("替代表达: BUY CALL |Δ|≈0.35, 到期≥{}天", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                    } else {
+                        format!("替代表达: BUY PUT |Δ|≈0.35, 到期≥{}天", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                    },
+                })
+            })
+            .collect()
+    };
+
+    let avg_ic = lib.iter().map(|f| f.holdout_ic).sum::<f64>() / lib.len() as f64;
+    Ok(Json(json!({
+        "as_of": panel.dates[t],
+        "horizon_days": lib.first().map_or(5, |f| f.horizon),
+        "capital_usd": req.capital_usd,
+        "longs": make_picks("long", &longs, long_budget),
+        "shorts": make_picks("short", &shorts, short_budget),
+        "sizing_rule": "权重 ∝ 因子分/年化波动（分数强且波动低者多配），单票≤30%，多头60%/空头40%预算",
+        "confidence": {
+            "n_factors": lib.len(),
+            "avg_holdout_ic": avg_ic,
+            "note": "横截面相对强弱信号（留出IC≈该值）；预测的是组内相对表现，非绝对涨跌"
+        }
+    })))
+}
+
 /// F5: 用因子库当前值预测未来 horizon 日的横截面相对强弱
 pub async fn factor_forecast(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
     let lib = crate::mine_job::load_library(&state);

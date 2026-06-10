@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/factors_mined", get(routes::factors_mined))
         .route("/api/factor_strategy", post(routes::factor_strategy))
         .route("/api/factor_forecast", get(routes::factor_forecast))
+        .route("/api/universe_plan", post(routes::universe_plan))
         .route("/ws", get(routes::ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);
