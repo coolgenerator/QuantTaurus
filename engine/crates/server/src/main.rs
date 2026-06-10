@@ -103,7 +103,9 @@ fn spawn_auto_retrain(state: Arc<AppState>) {
             match state.store.get(&symbol, interval, start, end).await {
                 Ok(klines) => {
                     let mut cfg = auto_cfg_for(interval);
-                    cfg.bars_per_year = (365.25 * 86_400_000.0) / interval.millis() as f64;
+                    let (bpy, cost) = routes::market_params(&symbol, interval);
+                    cfg.bars_per_year = bpy;
+                    cfg.cost = cost;
                     tracing::info!(symbol, interval_s, bars = klines.len(), "auto-retrain starting");
                     state::launch_evolve(
                         state.clone(),

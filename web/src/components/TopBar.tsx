@@ -1,7 +1,14 @@
 import { useWsStatus } from '../ws'
 
-export const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] as const
+export const SYMBOL_GROUPS = {
+  Crypto: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
+  'US Stocks': ['SPY', 'QQQ', '^GSPC', '^IXIC', 'AAPL', 'NVDA'],
+} as const
 export const INTERVALS = ['1h', '4h', '1d'] as const
+
+export const isCrypto = (s: string) => s.endsWith('USDT')
+/** 股票数据源 (Yahoo) 不支持 4h */
+export const intervalsFor = (s: string) => (isCrypto(s) ? INTERVALS : (['1h', '1d'] as const))
 
 interface Props {
   symbol: string
@@ -12,6 +19,7 @@ interface Props {
 
 export default function TopBar({ symbol, interval, onSymbolChange, onIntervalChange }: Props) {
   const status = useWsStatus()
+  const intervals = intervalsFor(symbol)
 
   return (
     <header className="glass-card sticky top-3 z-50 mx-auto flex items-center gap-4 px-5 py-3">
@@ -26,17 +34,26 @@ export default function TopBar({ symbol, interval, onSymbolChange, onIntervalCha
         <select
           className="select-dark font-mono"
           value={symbol}
-          onChange={(e) => onSymbolChange(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value
+            onSymbolChange(next)
+            // 切到股票时 4h 不可用，回退 1d
+            if (!isCrypto(next) && interval === '4h') onIntervalChange('1d')
+          }}
         >
-          {SYMBOLS.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
+          {Object.entries(SYMBOL_GROUPS).map(([group, syms]) => (
+            <optgroup key={group} label={group}>
+              {syms.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
 
         <div className="flex overflow-hidden rounded-lg border border-white/10">
-          {INTERVALS.map((iv) => (
+          {intervals.map((iv) => (
             <button
               key={iv}
               onClick={() => onIntervalChange(iv)}

@@ -6,6 +6,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
+use qbacktest::CostModel;
 use qcore::Interval;
 use qevolve::EvolveConfig;
 use qstrategy::StrategySpec;
@@ -24,6 +25,36 @@ fn internal(e: impl ToString) -> (StatusCode, String) {
 
 pub async fn health() -> impl IntoResponse {
     Json(json!({"ok": true, "ts": now_ms()}))
+}
+
+/// 按资产类别返回（每年bar数, 成本模型）。
+/// 加密 24/7：365.25 天年化，taker 费率；股票/ETF：252 交易日年化，低佣金+滑点。
+pub fn market_params(symbol: &str, interval: Interval) -> (f64, CostModel) {
+    if qdata::is_crypto(symbol) {
+        (
+            (365.25 * 86_400_000.0) / interval.millis() as f64,
+            CostModel {
+                fee_rate: 0.001,
+                slippage: 0.0005,
+            },
+        )
+    } else {
+        let bars_per_trading_day = match interval {
+            Interval::D1 => 1.0,
+            Interval::H4 => 1.625,
+            Interval::H1 => 6.5,
+            Interval::M15 => 26.0,
+            Interval::M5 => 78.0,
+            Interval::M1 => 390.0,
+        };
+        (
+            252.0 * bars_per_trading_day,
+            CostModel {
+                fee_rate: 0.0001,
+                slippage: 0.0002,
+            },
+        )
+    }
 }
 
 #[derive(Deserialize)]
@@ -121,10 +152,10 @@ pub async fn backtest(
     if klines.len() < 300 {
         return Err(bad("not enough data"));
     }
-    let bars_per_year = (365.25 * 86_400_000.0) / interval.millis() as f64;
+    let (bars_per_year, cost) = market_params(&q.symbol, interval);
     let targets = req.spec.signals(&klines);
     let sigs = qbacktest::to_signals(&klines, &targets);
-    let result = qbacktest::run(&klines, &sigs, Default::default(), bars_per_year, 1);
+    let result = qbacktest::run(&klines, &sigs, cost, bars_per_year, 1);
     // 等距抽样资金曲线，最多2000点，避免巨大payload
     let step = (result.equity.len() / 2000).max(1);
     let equity: Vec<_> = result.equity.iter().step_by(step).collect();
@@ -161,8 +192,13 @@ pub async fn evolve_start(
         days: req.days,
     };
     let (klines, interval) = load_klines(&state, &q).await?;
+    let (bars_per_year, cost) = market_params(&q.symbol, interval);
+    let explicit_cfg = req.config.is_some();
     let mut cfg = req.config.unwrap_or_default();
-    cfg.bars_per_year = (365.25 * 86_400_000.0) / interval.millis() as f64;
+    cfg.bars_per_year = bars_per_year;
+    if !explicit_cfg {
+        cfg.cost = cost;
+    }
 
     // CPU 密集型任务放 blocking 线程，不阻塞 tokio
     crate::state::launch_evolve(

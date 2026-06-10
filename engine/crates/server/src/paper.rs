@@ -14,8 +14,14 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
-const FEE_RATE: f64 = 0.001;
-const SLIPPAGE: f64 = 0.0005;
+fn cost_per_unit_turnover(symbol: &str) -> f64 {
+    // 与回测同一成本模型（crate::routes::market_params）
+    if qdata::is_crypto(symbol) {
+        0.001 + 0.0005
+    } else {
+        0.0001 + 0.0002
+    }
+}
 /// 信号重算所需历史bar数（最大 lookback 200 + 热身余量）
 const HISTORY_BARS: i64 = 500;
 /// 净值点推送节流（毫秒）
@@ -179,7 +185,7 @@ async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
             sess.last_bar_open = last.open_time;
             let turnover = (target - sess.position).abs();
             if turnover > 1e-9 {
-                let cost = turnover * (FEE_RATE + SLIPPAGE);
+                let cost = turnover * cost_per_unit_turnover(&sess.symbol);
                 sess.equity *= 1.0 - cost;
                 let trade = PaperTrade {
                     time: end,
