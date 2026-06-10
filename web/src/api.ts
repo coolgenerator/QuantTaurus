@@ -324,6 +324,85 @@ export function fetchOptionChain(symbol: string, expiry: string): Promise<Option
   )
 }
 
+// ---------- Option trade plans (derived from stock champion signals) ----------
+
+export type OptionAction = 'BUY CALL' | 'BUY PUT'
+
+export interface OptionPlan {
+  underlying: string
+  action: OptionAction
+  code: string
+  strike: number
+  /** Expiry date, e.g. "2026-07-02". */
+  expiry: string
+  /** Days to expiration. */
+  dte: number
+  /** Premium per share; one contract = ×100. */
+  premium: number
+  /** Suggested contracts; 0 = a single contract exceeds the budget. */
+  qty_suggested: number
+  /** Implied vol, in percent units. */
+  iv: number | null
+  delta: number | null
+  theta: number | null
+  open_interest: number | null
+  spot: number
+  entry_rule: string
+  exit_rules: string[]
+  rationale: string
+  /** Confidence of the underlying stock signal, [0, 100]. */
+  stock_confidence: number
+  stock_target: number
+}
+
+export interface OptionPlansResponse {
+  as_of: number
+  plans: OptionPlan[]
+}
+
+export function fetchOptionPlans(): Promise<OptionPlansResponse> {
+  return getJson('/opt-api/plans')
+}
+
+// ---------- Options paper trading ----------
+
+export interface OptionPaperPosition {
+  code: string
+  qty: number
+  action: OptionAction
+  entry_premium: number
+  mark: number
+  cost_basis: number
+  entry_ms: number
+  expiry: string
+  strike: number
+  rationale: string
+}
+
+export interface OptionPaperTrade {
+  time: number // ms
+  side: 'BUY' | 'SELL'
+  code: string
+  qty: number
+  premium: number
+  reason: string
+  /** Realized PnL; null on BUY. */
+  pnl: number | null
+}
+
+export interface OptionsPaperStatus {
+  cash: number
+  equity: number
+  updated_ms: number
+  /** Underlying symbol → open position. */
+  positions: Record<string, OptionPaperPosition>
+  trades: OptionPaperTrade[]
+}
+
+export function fetchOptionsPaper(): Promise<OptionsPaperStatus> {
+  return getJson('/opt-api/paper-options')
+}
+
 // ---------- WS message types ----------
 
 export interface WsKlineMsg {
