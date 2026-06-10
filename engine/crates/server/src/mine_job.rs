@@ -31,6 +31,8 @@ pub enum MineStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryFactor {
     pub expression: String,
+    /// 可执行 AST（方向已归一）
+    pub ast: qmine::Expr,
     pub mean_ic: f64,
     pub icir: f64,
     pub holdout_ic: f64,
@@ -84,6 +86,7 @@ pub fn launch_mine(state: Arc<AppState>, panel: Panel, cfg: MineConfig) {
             }
             lib.push(LibraryFactor {
                 expression: f.expression.clone(),
+                ast: f.expr.clone(),
                 mean_ic: f.mean_ic,
                 icir: f.icir,
                 holdout_ic: f.holdout_ic,

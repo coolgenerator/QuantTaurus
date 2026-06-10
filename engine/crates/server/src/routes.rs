@@ -319,6 +319,120 @@ pub async fn factors_mined(State(state): State<Arc<AppState>>) -> impl IntoRespo
 }
 
 #[derive(Deserialize)]
+pub struct FactorStrategyReq {
+    #[serde(default = "default_mine_days")]
+    days: i64,
+    #[serde(default)]
+    config: Option<qmine::CsBtConfig>,
+}
+
+/// 因子库 → 横截面多空策略回测；按留出期切分报告（与挖掘同一 20% 切分）
+pub async fn factor_strategy(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<FactorStrategyReq>,
+) -> AppResult<impl IntoResponse> {
+    let lib = crate::mine_job::load_library(&state);
+    if lib.is_empty() {
+        return Err(bad("因子库为空，先 POST /api/mine 挖掘"));
+    }
+    let panel = crate::mine_job::build_panel(&state, req.days)
+        .await
+        .map_err(internal)?;
+    let cfg = req.config.unwrap_or_default();
+    let exprs: Vec<qmine::Expr> = lib.iter().map(|f| f.ast.clone()).collect();
+    let result = tokio::task::spawn_blocking(move || qmine::backtest_cs(&panel, &exprs, &cfg))
+        .await
+        .map_err(internal)?;
+
+    let n = result.daily_rets.len();
+    let holdout_start = n - (n as f64 * 0.2) as usize;
+    let seg_metrics = |t0: usize, t1: usize| {
+        let rets = &result.daily_rets[t0..t1];
+        let mut eq = 1.0;
+        let curve: Vec<qcore::EquityPoint> = (t0..t1)
+            .map(|t| {
+                eq *= 1.0 + result.daily_rets[t];
+                qcore::EquityPoint {
+                    time: result.dates[t],
+                    equity: eq,
+                    position: 0.0,
+                    price: 0.0,
+                }
+            })
+            .collect();
+        qbacktest::compute_metrics(rets, &curve, 252.0, result.n_rebalances as u64, 0, 1)
+    };
+    let full = seg_metrics(130, n);
+    let search = seg_metrics(130, holdout_start);
+    let holdout = seg_metrics(holdout_start, n);
+
+    // 等距抽样净值
+    let step = (n / 1500).max(1);
+    let equity: Vec<serde_json::Value> = (0..n)
+        .step_by(step)
+        .map(|t| json!({"time": result.dates[t], "equity": result.equity[t]}))
+        .collect();
+    Ok(Json(json!({
+        "factors_used": lib.iter().map(|f| &f.expression).collect::<Vec<_>>(),
+        "metrics_full": full,
+        "metrics_search": search,
+        "metrics_holdout": holdout,
+        "holdout_start_ms": result.dates[holdout_start],
+        "avg_turnover": result.avg_turnover_per_rebalance,
+        "names_per_side": result.names_per_side,
+        "equity": equity,
+        "note": "美元中性多空组合(±0.5)，5bp/边成本；metrics_holdout 为挖掘从未接触的最近20%时段"
+    })))
+}
+
+/// F5: 用因子库当前值预测未来 horizon 日的横截面相对强弱
+pub async fn factor_forecast(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+    let lib = crate::mine_job::load_library(&state);
+    if lib.is_empty() {
+        return Err(bad("因子库为空，先 POST /api/mine 挖掘"));
+    }
+    let panel = crate::mine_job::build_panel(&state, 600).await.map_err(internal)?;
+    let exprs: Vec<qmine::Expr> = lib.iter().map(|f| f.ast.clone()).collect();
+    let z = tokio::task::spawn_blocking({
+        let panel = panel.clone();
+        move || qmine::combined_z(&panel, &exprs)
+    })
+    .await
+    .map_err(internal)?;
+    let t = panel.n_dates() - 1;
+    let mut scores: Vec<(String, f64)> = panel
+        .symbols
+        .iter()
+        .enumerate()
+        .filter_map(|(s, sym)| {
+            let v = z[s][t];
+            if v.is_finite() {
+                Some((sym.clone(), v))
+            } else {
+                None
+            }
+        })
+        .collect();
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let avg_ic = lib.iter().map(|f| f.holdout_ic).sum::<f64>() / lib.len() as f64;
+    let horizon = lib.first().map_or(5, |f| f.horizon);
+    Ok(Json(json!({
+        "as_of": panel.dates[t],
+        "horizon_days": horizon,
+        "rankings": scores.iter().map(|(s, v)| json!({"symbol": s, "score": v})).collect::<Vec<_>>(),
+        "confidence": {
+            "avg_holdout_ic": avg_ic,
+            "n_factors": lib.len(),
+            "interpretation": format!(
+                "留出期日均RankIC≈{:.3}：排序具有统计意义但单期噪声大，\
+                 只宜作横截面相对强弱参考（前1/5 vs 后1/5），不是个股绝对涨跌预测",
+                avg_ic
+            ),
+        },
+    })))
+}
+
+#[derive(Deserialize)]
 pub struct OptBtReq {
     symbol: String,
     #[serde(default = "default_days")]

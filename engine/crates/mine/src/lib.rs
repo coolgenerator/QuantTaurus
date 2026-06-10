@@ -12,7 +12,9 @@
 pub mod expr;
 pub mod gp;
 pub mod panel;
+pub mod strategy;
 
 pub use expr::Expr;
 pub use gp::{mine, MineConfig, MinedFactor, MineReport};
 pub use panel::Panel;
+pub use strategy::{backtest_cs, combined_z, CsBtConfig, CsBtResult};

@@ -74,6 +74,11 @@ pub struct MineReport {
     pub holdout_dates: (i64, i64),
 }
 
+/// 横截面 z 分（strategy 模块复用）
+pub fn cs_zscore_pub(mat: &mut [Vec<f64>]) {
+    cs_zscore(mat)
+}
+
 /// 横截面 z 分（每个时点跨标的）；NaN 保持
 fn cs_zscore(mat: &mut [Vec<f64>]) {
     let n_t = mat[0].len();
@@ -317,21 +322,22 @@ pub fn mine(panel: &Panel, cfg: &MineConfig) -> MineReport {
             } else {
                 0.0
             };
-            let expression = if flip {
-                format!("(-1 * {})", ev.expr)
+            // 方向归一后的最终可执行表达式
+            let final_expr = if flip {
+                Expr::Neg(Box::new(ev.expr))
             } else {
-                ev.expr.to_string()
+                ev.expr
             };
             MinedFactor {
-                expression,
-                complexity: ev.expr.size(),
+                expression: final_expr.to_string(),
+                complexity: final_expr.size(),
                 fitness: ev.raw_fitness,
                 fold_ics: ev.fold_ics,
                 mean_ic: m_ic,
                 icir,
                 holdout_ic: h_ic,
                 passed_holdout: h_ic > cfg.holdout_ic_floor,
-                expr: ev.expr,
+                expr: final_expr,
             }
         })
         .collect();
