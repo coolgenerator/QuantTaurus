@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import TopBar, { isCrypto } from './components/TopBar'
 import PriceChart from './components/PriceChart'
 import FactorPanel from './components/FactorPanel'
@@ -61,6 +61,21 @@ function ViewTabs({ view, onChange }: { view: View; onChange: (v: View) => void 
 /** 交易计划页二级子视图。 */
 type PlanView = 'champion' | 'universe' | 'options'
 
+/** Hash 路由：#/<view>[/<planView>]?s=<symbol>&i=<interval>，刷新后还原页面与标的。 */
+function parseHash(): { view: View; planView: PlanView; symbol?: string; interval?: string } {
+  const [path, query] = window.location.hash.replace(/^#\/?/, '').split('?')
+  const [v, sub] = path.split('/')
+  const view = VIEW_TABS.some((t) => t.key === v) ? (v as View) : 'stocks'
+  const planView = ['champion', 'universe', 'options'].includes(sub) ? (sub as PlanView) : 'champion'
+  const params = new URLSearchParams(query ?? '')
+  return {
+    view,
+    planView,
+    symbol: params.get('s') ?? undefined,
+    interval: params.get('i') ?? undefined,
+  }
+}
+
 const PLAN_TABS: { key: PlanView; label: string; sub: string }[] = [
   { key: 'champion', label: '🏆 冠军计划', sub: 'Champion' },
   { key: 'universe', label: '🌐 全池精选', sub: 'Universe' },
@@ -92,23 +107,46 @@ function PlanSubNav({ planView, onChange }: { planView: PlanView; onChange: (v: 
 }
 
 export default function App() {
-  const [symbol, setSymbol] = useState('BTCUSDT')
-  const [interval, setInterval] = useState('1h')
-  const [view, setView] = useState<View>('stocks')
+  const [symbol, setSymbol] = useState(() => parseHash().symbol ?? 'BTCUSDT')
+  const [interval, setInterval] = useState(() => parseHash().interval ?? '1h')
+  const [view, setView] = useState<View>(() => parseHash().view)
   // 计划页二级子视图：冠军计划（默认）/ 全池精选 / 期权计划。
-  const [planView, setPlanView] = useState<PlanView>('champion')
+  const [planView, setPlanView] = useState<PlanView>(() => parseHash().planView)
   // 进过一次期权页后保持挂载，避免切回时丢失已加载的链数据。
-  const [optionsMounted, setOptionsMounted] = useState(false)
+  const [optionsMounted, setOptionsMounted] = useState(() => parseHash().view === 'options')
   // 因子 Lab 同理懒挂载：进入后保持挂载，切走时挖掘轮询/报告状态不丢失。
-  const [factorLabMounted, setFactorLabMounted] = useState(false)
+  const [factorLabMounted, setFactorLabMounted] = useState(() => parseHash().view === 'factorlab')
   // 技术分析页懒挂载：四张图实例较重，进入后保持挂载。
-  const [techMounted, setTechMounted] = useState(false)
+  const [techMounted, setTechMounted] = useState(() => parseHash().view === 'tech')
 
   const changeView = useCallback((v: View) => {
     setView(v)
     if (v === 'options') setOptionsMounted(true)
     if (v === 'factorlab') setFactorLabMounted(true)
     if (v === 'tech') setTechMounted(true)
+  }, [])
+
+  // 视图/标的 → URL hash（replaceState 不污染历史）；刷新和分享链接都能还原
+  useEffect(() => {
+    const path = view === 'plans' ? `plans/${planView}` : view
+    const hash = `#/${path}?s=${symbol}&i=${interval}`
+    if (window.location.hash !== hash) window.history.replaceState(null, '', hash)
+  }, [view, planView, symbol, interval])
+
+  // 手改地址栏 / 浏览器前进后退 → 同步回 state
+  useEffect(() => {
+    const onHash = () => {
+      const p = parseHash()
+      setView(p.view)
+      setPlanView(p.planView)
+      if (p.symbol) setSymbol(p.symbol)
+      if (p.interval) setInterval(p.interval)
+      if (p.view === 'options') setOptionsMounted(true)
+      if (p.view === 'factorlab') setFactorLabMounted(true)
+      if (p.view === 'tech') setTechMounted(true)
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
   // 计划卡「信号策略」联动：跳转到策略 Tab。
