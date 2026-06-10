@@ -137,7 +137,55 @@ pub fn start_paper_engine(state: Arc<AppState>) {
     });
 }
 
+fn max_dd_limit() -> f64 {
+    std::env::var("QHH_MAX_DD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.15)
+}
+
+/// 组合回撤熔断（机构 kill-switch）：全部会话平均净值相对历史峰值
+/// 回撤超过 QHH_MAX_DD（默认15%）时，停止开新仓、全部目标仓位清零，
+/// 直到人工干预（删除 data/risk_halt 文件）或回撤恢复到一半以内。
+fn check_kill_switch(state: &Arc<AppState>) -> bool {
+    let halt_file = state.paper_path.with_file_name("risk_halt");
+    let peak_file = state.paper_path.with_file_name("equity_peak");
+    let agg = {
+        let guard = state.paper.lock().unwrap();
+        if guard.is_empty() {
+            return false;
+        }
+        guard.values().map(|s| s.equity).sum::<f64>() / guard.len() as f64
+    };
+    let mut peak: f64 = std::fs::read_to_string(&peak_file)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(1.0);
+    if agg > peak {
+        peak = agg;
+        let _ = std::fs::write(&peak_file, format!("{peak}"));
+    }
+    let dd = 1.0 - agg / peak;
+    let limit = max_dd_limit();
+    if halt_file.exists() {
+        // 已熔断：回撤恢复到限值一半以内自动解除
+        if dd < limit / 2.0 {
+            let _ = std::fs::remove_file(&halt_file);
+            tracing::warn!(dd, "风控熔断解除：回撤已恢复");
+            return false;
+        }
+        return true;
+    }
+    if dd > limit {
+        let _ = std::fs::write(&halt_file, format!("dd={dd:.4} limit={limit} agg={agg:.4} peak={peak:.4}"));
+        tracing::error!(dd, limit, "⚠️ 组合回撤熔断触发：全部目标仓位清零，删除 data/risk_halt 可人工恢复");
+        return true;
+    }
+    false
+}
+
 async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
+    let halted = check_kill_switch(state);
     // 注册表快照
     let champions: Vec<(String, String, String, StrategySpec)> = {
         let champs = state.champions.lock().unwrap();
@@ -159,7 +207,7 @@ async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
     }
 
     for (key, symbol, interval_s, spec) in champions {
-        if let Err(e) = rebalance_one(state, &key, &symbol, &interval_s, &spec).await {
+        if let Err(e) = rebalance_one(state, &key, &symbol, &interval_s, &spec, halted).await {
             tracing::warn!(key, error = %e, "paper rebalance failed for session");
         }
     }
@@ -172,6 +220,7 @@ async fn rebalance_one(
     symbol: &str,
     interval_s: &str,
     spec: &StrategySpec,
+    risk_halted: bool,
 ) -> anyhow::Result<()> {
     debug_assert_eq!(key, champ_key(symbol, interval_s));
     let Some(interval) = Interval::parse(interval_s) else {
@@ -205,6 +254,10 @@ async fn rebalance_one(
     // 正股默认只多不空（QHH_STOCK_LONG_ONLY=0 可关闭）；加密不受限
     if !qdata::is_crypto(symbol) && stock_long_only() {
         target = target.max(0.0);
+    }
+    // 组合回撤熔断：清零全部目标仓位
+    if risk_halted {
+        target = 0.0;
     }
 
     let mut events: Vec<WsMessage> = Vec::new();
