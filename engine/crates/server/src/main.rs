@@ -10,6 +10,7 @@
 //!   GET  /ws                实时行情 + 进化进度推送
 
 mod paper;
+mod plan;
 mod routes;
 mod sectors;
 mod state;
@@ -60,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/champion", get(routes::champion))
         .route("/api/paper", get(routes::paper))
         .route("/api/sectors", get(routes::sectors))
+        .route("/api/plan", get(routes::plan))
         .route("/ws", get(routes::ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);

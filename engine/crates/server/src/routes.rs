@@ -253,6 +253,11 @@ pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(json!({"active": !sessions.is_empty(), "sessions": sessions}))
 }
 
+pub async fn plan(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+    let plans = crate::plan::build_plans(&state).await.map_err(internal)?;
+    Ok(Json(plans))
+}
+
 pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
     // 10分钟内存缓存：板块报告要打几十个 Yahoo 请求
     {
