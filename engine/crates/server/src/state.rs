@@ -83,6 +83,8 @@ pub struct AppState {
     pub champion_path: PathBuf,
     /// 每个冠军一个模拟盘会话，键同注册表
     pub paper: Mutex<HashMap<String, crate::paper::PaperSession>>,
+    /// 板块报告缓存：(生成时间ms, 序列化结果)
+    pub sector_cache: Mutex<Option<(i64, serde_json::Value)>>,
 }
 
 impl AppState {
@@ -112,6 +114,7 @@ impl AppState {
             champions: Mutex::new(champions),
             champion_path,
             paper: Mutex::new(HashMap::new()),
+            sector_cache: Mutex::new(None),
         })
     }
 

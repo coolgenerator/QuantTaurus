@@ -11,6 +11,7 @@
 
 mod paper;
 mod routes;
+mod sectors;
 mod state;
 
 use axum::routing::{get, post};
@@ -54,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/evolve/status", get(routes::evolve_status))
         .route("/api/champion", get(routes::champion))
         .route("/api/paper", get(routes::paper))
+        .route("/api/sectors", get(routes::sectors))
         .route("/ws", get(routes::ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);

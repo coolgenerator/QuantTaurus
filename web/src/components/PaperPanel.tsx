@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createChart,
   ColorType,
@@ -24,6 +24,12 @@ const EQUITY_COLOR = '#22d3ee'
 
 interface TradeRow extends PaperTrade {
   id: number
+}
+
+interface LiveStats {
+  equity: number
+  position: number
+  price: number
 }
 
 let nextId = 0
@@ -59,34 +65,48 @@ export default function PaperPanel() {
   const lastTimeRef = useRef<number>(0)
   const loadingRef = useRef(false)
 
-  const [session, setSession] = useState<PaperSession | null>(null)
-  const [stats, setStats] = useState<{ equity: number; position: number; price: number } | null>(null)
-  const [trades, setTrades] = useState<TradeRow[]>([])
+  const [sessions, setSessions] = useState<Record<string, PaperSession>>({})
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [statsByKey, setStatsByKey] = useState<Record<string, LiveStats>>({})
+  const [tradesByKey, setTradesByKey] = useState<Record<string, TradeRow[]>>({})
   const [error, setError] = useState<string | null>(null)
+
+  // Refs mirroring state so the (long-lived) WS handler never reads stale
+  // closure values.
+  const selectedKeyRef = useRef<string | null>(null)
+  selectedKeyRef.current = selectedKey
+  const sessionKeysRef = useRef<string[]>([])
 
   const load = useCallback(async () => {
     if (loadingRef.current) return
     loadingRef.current = true
     try {
       const s = await fetchPaperStatus()
-      if (s.active) {
-        setSession(s.session)
-        setStats({
-          equity: s.session.equity,
-          position: s.session.position,
-          price: s.session.last_price,
-        })
-        setTrades(
-          [...s.session.trades]
-            .sort((a, b) => b.time - a.time)
-            .slice(0, MAX_TRADES)
-            .map((t) => ({ ...t, id: nextId++ })),
-        )
-      } else {
-        setSession(null)
-        setStats(null)
-        setTrades([])
-      }
+      const map = s.sessions ?? {}
+      const keys = Object.keys(map).sort()
+      sessionKeysRef.current = keys
+      setSessions(map)
+      setStatsByKey(
+        Object.fromEntries(
+          keys.map((k) => [
+            k,
+            { equity: map[k].equity, position: map[k].position, price: map[k].last_price },
+          ]),
+        ),
+      )
+      setTradesByKey(
+        Object.fromEntries(
+          keys.map((k) => [
+            k,
+            [...map[k].trades]
+              .sort((a, b) => b.time - a.time)
+              .slice(0, MAX_TRADES)
+              .map((t) => ({ ...t, id: nextId++ })),
+          ]),
+        ),
+      )
+      // Keep the current tab if it still exists; otherwise pick the first.
+      setSelectedKey((prev) => (prev && keys.includes(prev) ? prev : keys[0] ?? null))
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -99,7 +119,11 @@ export default function PaperPanel() {
     void load()
   }, [load])
 
-  // (Re)create the equity chart whenever a session becomes available.
+  const sortedKeys = useMemo(() => Object.keys(sessions).sort(), [sessions])
+  const session = selectedKey ? sessions[selectedKey] ?? null : null
+
+  // (Re)create the equity chart whenever the selected session changes
+  // (tab switch or data reload) — rebuilt from that session's curve.
   useEffect(() => {
     const el = containerRef.current
     if (!el || !session) return
@@ -144,29 +168,39 @@ export default function PaperPanel() {
     }
   }, [session])
 
-  // Live updates: the paper session follows the champion, NOT the page's
-  // selected symbol — so no symbol filtering here.
+  // Live updates, fanned out per session key. Only messages for the selected
+  // tab feed the chart; other keys just refresh their tab's mini equity.
   useWsMessages((msg) => {
     if (msg.channel === 'paper') {
-      const t = toUnixSec(msg.time)
-      // Never feed an older point to the series (the chart would throw).
-      if (t >= lastTimeRef.current) {
-        lastTimeRef.current = t
-        seriesRef.current?.update({ time: t as UTCTimestamp, value: msg.equity })
+      setStatsByKey((prev) => ({
+        ...prev,
+        [msg.key]: { equity: msg.equity, position: msg.position, price: msg.price },
+      }))
+      if (msg.key === selectedKeyRef.current) {
+        const t = toUnixSec(msg.time)
+        // Never feed an older point to the series (the chart would throw).
+        if (t >= lastTimeRef.current) {
+          lastTimeRef.current = t
+          seriesRef.current?.update({ time: t as UTCTimestamp, value: msg.equity })
+        }
       }
-      setStats({ equity: msg.equity, position: msg.position, price: msg.price })
-      // A champion may have just been promoted while we showed the empty state.
-      if (!session) void load()
+      // A session we don't know about yet (fresh promotion) — resync.
+      if (!sessionKeysRef.current.includes(msg.key)) void load()
     } else if (msg.channel === 'paper_trade') {
-      const row: TradeRow = { ...msg, id: nextId++ }
-      setTrades((prev) => [row, ...prev].slice(0, MAX_TRADES))
+      const row: TradeRow = { ...msg.trade, id: nextId++ }
+      setTradesByKey((prev) => ({
+        ...prev,
+        [msg.key]: [row, ...(prev[msg.key] ?? [])].slice(0, MAX_TRADES),
+      }))
     } else if (msg.channel === 'evolve_done' && msg.promoted) {
-      // A newly promoted champion restarts the paper session — resync.
+      // A newly promoted champion (re)starts its paper session — resync.
       void load()
     }
   })
 
-  const active = session !== null
+  const active = sortedKeys.length > 0
+  const stats = selectedKey ? statsByKey[selectedKey] ?? null : null
+  const trades = selectedKey ? tradesByKey[selectedKey] ?? [] : []
   const equity = stats?.equity ?? 1
   const pnl = equity - 1
   const equityCls = pnl >= 0 ? 'text-neon-green' : 'text-neon-red'
@@ -178,17 +212,11 @@ export default function PaperPanel() {
         {active && (
           <span className="badge border border-neon-green/40 bg-neon-green/10 text-neon-green">
             <span className="inline-block h-2 w-2 animate-pulse-dot rounded-full bg-neon-green" />
-            LIVE
+            LIVE · {sortedKeys.length}
           </span>
         )}
         {session && (
           <span className="ml-auto flex flex-wrap items-center gap-1.5">
-            <span className="badge border border-white/15 bg-white/5 font-mono text-slate-300">
-              {session.symbol}
-            </span>
-            <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-              {session.interval}
-            </span>
             <span className="badge border border-neon-purple/40 bg-neon-purple/10 font-mono text-neon-purple">
               {session.spec.kind}
             </span>
@@ -209,7 +237,42 @@ export default function PaperPanel() {
         </div>
       )}
 
-      {active && stats && (
+      {active && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {sortedKeys.map((key) => {
+            const s = sessions[key]
+            const live = statsByKey[key]
+            const eq = live?.equity ?? s.equity
+            const tabPnl = eq - 1
+            const isActive = key === selectedKey
+            return (
+              <button
+                key={key}
+                onClick={() => setSelectedKey(key)}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 font-mono text-xs transition ${
+                  isActive
+                    ? 'border-neon-cyan/60 bg-neon-cyan/10 text-neon-cyan shadow-[0_0_12px_rgba(34,211,238,0.35)]'
+                    : 'border-white/10 bg-white/5 text-slate-400 hover:border-white/25 hover:text-slate-200'
+                }`}
+              >
+                <span>
+                  {s.symbol}
+                  <span className={isActive ? 'text-neon-cyan/60' : 'text-slate-600'}> · </span>
+                  {s.interval}
+                </span>
+                <span
+                  className={`font-bold ${tabPnl >= 0 ? 'text-neon-green' : 'text-neon-red'}`}
+                  title="live equity"
+                >
+                  {fmtNum(eq, 4)}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {active && session && stats && (
         <>
           <div className="mb-3 grid grid-cols-3 gap-3">
             <div className="rounded-xl border border-white/5 bg-black/20 p-3">

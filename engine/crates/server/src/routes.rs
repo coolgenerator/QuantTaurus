@@ -227,6 +227,22 @@ pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(json!({"active": !sessions.is_empty(), "sessions": sessions}))
 }
 
+pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+    // 10分钟内存缓存：板块报告要打几十个 Yahoo 请求
+    {
+        let cache = state.sector_cache.lock().unwrap();
+        if let Some((ts, val)) = cache.as_ref() {
+            if now_ms() - ts < crate::sectors::CACHE_TTL_MS {
+                return Ok(Json(val.clone()));
+            }
+        }
+    }
+    let report = crate::sectors::build_report(&state).await.map_err(internal)?;
+    let val = serde_json::to_value(&report).map_err(internal)?;
+    *state.sector_cache.lock().unwrap() = Some((now_ms(), val.clone()));
+    Ok(Json(val))
+}
+
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,

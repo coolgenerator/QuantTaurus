@@ -35,6 +35,7 @@ export type StrategySpec =
       w_flow: number
       w_vol: number
     }
+  | { kind: 'ensemble'; members: StrategySpec[] }
 
 export type SpecKind = StrategySpec['kind']
 
@@ -88,13 +89,22 @@ export interface EvolveStatus {
   report?: EvolveReport
 }
 
-export interface Champion {
+export interface ChampionLineageEntry {
   spec: StrategySpec
+  holdout_sharpe: number
+  promoted_ms: number
+}
+
+export interface ChampionRecord {
+  spec: StrategySpec | null
   symbol: string
   interval: string
   updated_ms: number
-  lineage: { spec: StrategySpec; holdout_sharpe: number; promoted_ms: number }[]
+  lineage: ChampionLineageEntry[]
 }
+
+/** Slot key ("SPY|1d") → champion record. */
+export type ChampionRegistryMap = Record<string, ChampionRecord>
 
 export interface PaperTrade {
   time: number // ms
@@ -117,7 +127,11 @@ export interface PaperSession {
   trades: PaperTrade[]
 }
 
-export type PaperStatus = { active: false } | { active: true; session: PaperSession }
+export interface PaperStatus {
+  active: boolean
+  /** Session key ("SPY|1d") → paper session. */
+  sessions: Record<string, PaperSession>
+}
 
 // ---------- WS message types ----------
 
@@ -148,14 +162,20 @@ export interface WsEvolveDoneMsg {
 
 export interface WsPaperMsg {
   channel: 'paper'
+  key: string // session key, e.g. "SPY|1d"
+  symbol: string
+  interval: string
   time: number // ms
   equity: number
   position: number
   price: number
 }
 
-export interface WsPaperTradeMsg extends PaperTrade {
+export interface WsPaperTradeMsg {
   channel: 'paper_trade'
+  key: string // session key, e.g. "SPY|1d"
+  symbol: string
+  trade: PaperTrade
 }
 
 export type WsMessage = WsKlineMsg | WsTradeMsg | WsEvolveDoneMsg | WsPaperMsg | WsPaperTradeMsg
@@ -212,7 +232,7 @@ export function fetchEvolveStatus(): Promise<EvolveStatus> {
   return getJson('/api/evolve/status')
 }
 
-export function fetchChampion(): Promise<Champion> {
+export function fetchChampions(): Promise<ChampionRegistryMap> {
   return getJson('/api/champion')
 }
 

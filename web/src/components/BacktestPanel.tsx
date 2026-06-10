@@ -27,7 +27,11 @@ interface FieldDef {
   step: number
 }
 
-const SPEC_FORMS: Record<SpecKind, { label: string; fields: FieldDef[]; defaults: Record<string, number> }> = {
+/** Spec kinds with flat numeric params, editable in the manual backtest form.
+ * 'ensemble' is evolution-only (nested members), so it is excluded here. */
+type FormSpecKind = Exclude<SpecKind, 'ensemble'>
+
+const SPEC_FORMS: Record<FormSpecKind, { label: string; fields: FieldDef[]; defaults: Record<string, number> }> = {
   tsmom: {
     label: 'TS Momentum',
     fields: [
@@ -90,7 +94,7 @@ function Metric({
 const signTone = (v: number): 'pos' | 'neg' => (v >= 0 ? 'pos' : 'neg')
 
 export default function BacktestPanel({ symbol, interval }: Props) {
-  const [kind, setKind] = useState<SpecKind>('tsmom')
+  const [kind, setKind] = useState<FormSpecKind>('tsmom')
   const [params, setParams] = useState<Record<string, number>>(SPEC_FORMS.tsmom.defaults)
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [running, setRunning] = useState(false)
@@ -100,7 +104,7 @@ export default function BacktestPanel({ symbol, interval }: Props) {
   const chartRef = useRef<IChartApi | null>(null)
   const equityRef = useRef<ISeriesApi<'Area'> | null>(null)
 
-  const changeKind = (k: SpecKind) => {
+  const changeKind = (k: FormSpecKind) => {
     setKind(k)
     setParams(SPEC_FORMS[k].defaults)
   }
@@ -180,9 +184,9 @@ export default function BacktestPanel({ symbol, interval }: Props) {
           <select
             className="select-dark"
             value={kind}
-            onChange={(e) => changeKind(e.target.value as SpecKind)}
+            onChange={(e) => changeKind(e.target.value as FormSpecKind)}
           >
-            {(Object.keys(SPEC_FORMS) as SpecKind[]).map((k) => (
+            {(Object.keys(SPEC_FORMS) as FormSpecKind[]).map((k) => (
               <option key={k} value={k}>
                 {SPEC_FORMS[k].label}
               </option>
