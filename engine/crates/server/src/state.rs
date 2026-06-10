@@ -85,6 +85,7 @@ pub struct AppState {
     pub paper: Mutex<HashMap<String, crate::paper::PaperSession>>,
     /// 板块报告缓存：(生成时间ms, 序列化结果)
     pub sector_cache: Mutex<Option<(i64, serde_json::Value)>>,
+    pub paper_path: PathBuf,
 }
 
 impl AppState {
@@ -107,15 +108,33 @@ impl AppState {
         } else {
             HashMap::new()
         };
+        // 模拟盘会话持久化恢复（重启不清零净值）
+        let paper_path = PathBuf::from(data_dir).join("paper.json");
+        let paper: HashMap<String, crate::paper::PaperSession> = if paper_path.exists() {
+            serde_json::from_str(&std::fs::read_to_string(&paper_path)?).unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
         Ok(Self {
             store,
             ws_tx,
             evolve_status: Mutex::new(EvolveStatus::Idle),
             champions: Mutex::new(champions),
             champion_path,
-            paper: Mutex::new(HashMap::new()),
+            paper: Mutex::new(paper),
             sector_cache: Mutex::new(None),
+            paper_path,
         })
+    }
+
+    pub fn save_paper(&self) {
+        let map = self.paper.lock().unwrap().clone();
+        if let Ok(json) = serde_json::to_string(&map) {
+            let tmp = self.paper_path.with_extension("tmp");
+            if std::fs::write(&tmp, json).is_ok() {
+                let _ = std::fs::rename(&tmp, &self.paper_path);
+            }
+        }
     }
 
     pub fn save_champions(&self) {

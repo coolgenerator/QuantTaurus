@@ -10,7 +10,7 @@
 use crate::state::{champ_key, now_ms, AppState, WsMessage};
 use qcore::{EquityPoint, Interval};
 use qstrategy::StrategySpec;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +31,7 @@ fn cost_per_unit_turnover(symbol: &str) -> f64 {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperTrade {
     pub time: i64,
     pub price: f64,
@@ -40,7 +40,7 @@ pub struct PaperTrade {
     pub cost: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperSession {
     pub symbol: String,
     pub interval: String,
@@ -118,10 +118,16 @@ pub fn start_paper_engine(state: Arc<AppState>) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(30));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut n: u64 = 0;
         loop {
             tick.tick().await;
             if let Err(e) = rebalance_tick(&state).await {
                 tracing::warn!(error = %e, "paper rebalance tick failed");
+            }
+            // 每 5 分钟落盘一次会话（重启恢复净值）
+            n += 1;
+            if n % 10 == 0 {
+                state.save_paper();
             }
         }
     });
