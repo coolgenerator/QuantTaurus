@@ -1,0 +1,8 @@
+[package]
+name = "qfactors"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+qcore = { path = "../core" }
+serde.workspace = true

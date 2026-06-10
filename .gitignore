@@ -1,0 +1,7 @@
+engine/target/
+engine/data/
+data/
+node_modules/
+web/dist/
+.DS_Store
+*.log

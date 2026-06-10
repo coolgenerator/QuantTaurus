@@ -1,0 +1,10 @@
+[package]
+name = "qstrategy"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+qcore = { path = "../core" }
+qfactors = { path = "../factors" }
+serde.workspace = true
+rand.workspace = true
