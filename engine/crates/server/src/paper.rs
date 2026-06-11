@@ -25,6 +25,55 @@ fn stock_long_only() -> bool {
     std::env::var("QHH_STOCK_LONG_ONLY").map_or(true, |v| v != "0")
 }
 
+/// 经典信号仓位调制开关。**默认关闭**：4年A/B回测显示共振调制在6冠军槽
+/// 无一致增益（SPY 1.60→1.52 / QQQ 0.53→0.39，boost/cut单腿也不行）——
+/// 经典信号共振不含冠军策略之外的增量信息。设 QHH_TA_MOD=1 可实验性开启。
+fn ta_modulation_enabled() -> bool {
+    std::env::var("QHH_TA_MOD").map_or(false, |v| v == "1")
+}
+
+/// 经典信号共振 → 逐bar仓位调制系数（与klines等长）。
+/// 近5根bar内出现过"≥2条同向规则共振"的bar：与持仓同向 → ×1.2（顺势确认加仓），
+/// 与持仓反向 → ×0.8（警示减仓）；两者皆有则相乘（净效果×0.96，近似中性）。
+/// 调制后仓位仍 clamp 在 [-1,1]。卖出类信号只用于减仓，从不翻空。
+pub fn ta_modulation_factors(klines: &[qcore::Kline], base: &[f64]) -> Vec<f64> {
+    let n = klines.len();
+    let hits = qfactors::ta_rules::classic_rule_events(klines);
+    let (mut buy_cnt, mut sell_cnt) = (vec![0usize; n], vec![0usize; n]);
+    for h in &hits {
+        if h.side > 0 {
+            buy_cnt[h.idx] += 1;
+        } else {
+            sell_cnt[h.idx] += 1;
+        }
+    }
+    const W: usize = 5;
+    (0..n)
+        .map(|i| {
+            let pos = base[i];
+            if pos.abs() < 1e-9 {
+                return 1.0;
+            }
+            let lo = i.saturating_sub(W - 1);
+            let strong_buy = (lo..=i).any(|j| buy_cnt[j] >= 2);
+            let strong_sell = (lo..=i).any(|j| sell_cnt[j] >= 2);
+            let (with, against) = if pos > 0.0 {
+                (strong_buy, strong_sell)
+            } else {
+                (strong_sell, strong_buy)
+            };
+            let mut f = 1.0;
+            if with {
+                f *= 1.2;
+            }
+            if against {
+                f *= 0.8;
+            }
+            f
+        })
+        .collect()
+}
+
 fn cost_per_unit_turnover(symbol: &str) -> f64 {
     // 与回测同一成本模型（crate::routes::market_params）
     if qdata::is_crypto(symbol) {
@@ -55,6 +104,9 @@ pub struct PaperSession {
     pub last_price: f64,
     /// 最近一根已执行信号的收盘bar open_time
     pub last_bar_open: i64,
+    /// 当前生效的经典信号仓位调制系数（1.0=中性；1.2顺势共振/0.8反向警示）
+    #[serde(default = "default_ta_mod")]
+    pub ta_mod: f64,
     #[serde(skip)]
     pub last_push_ms: i64,
     pub curve: VecDeque<EquityPoint>,
@@ -62,6 +114,10 @@ pub struct PaperSession {
 }
 
 /// 启动模拟盘引擎（两个任务：价格标记 + 调仓检查）
+fn default_ta_mod() -> f64 {
+    1.0
+}
+
 pub fn start_paper_engine(state: Arc<AppState>) {
     // 任务1：实时价格 mark-to-market（命中所有同 symbol 的会话）
     let st = state.clone();
@@ -255,6 +311,13 @@ async fn rebalance_one(
     if !qdata::is_crypto(symbol) && stock_long_only() {
         target = target.max(0.0);
     }
+    // 经典信号共振调制（回测验证过的轻量风险覆盖；QHH_TA_MOD=0 关闭）
+    let mut ta_mod = 1.0f64;
+    if ta_modulation_enabled() {
+        let factors = ta_modulation_factors(&klines, &targets);
+        ta_mod = factors.last().copied().unwrap_or(1.0);
+        target = (target * ta_mod).clamp(-1.0, 1.0);
+    }
     // 组合回撤熔断：清零全部目标仓位
     if risk_halted {
         target = 0.0;
@@ -276,6 +339,7 @@ async fn rebalance_one(
                     position: target,
                     last_price: last.close,
                     last_bar_open: last.open_time,
+                    ta_mod,
                     last_push_ms: 0,
                     curve: VecDeque::new(),
                     trades: Vec::new(),
@@ -286,6 +350,7 @@ async fn rebalance_one(
         // 新收盘bar → 执行信号（股票无实时流时也在此用收盘价 mark）
         if last.open_time > sess.last_bar_open {
             sess.last_bar_open = last.open_time;
+            sess.ta_mod = ta_mod;
             // 用新bar收盘价 mark（对无实时流的股票这是唯一的价格更新点）
             if sess.last_price > 0.0 {
                 sess.equity *= 1.0 + sess.position * (last.close / sess.last_price - 1.0);

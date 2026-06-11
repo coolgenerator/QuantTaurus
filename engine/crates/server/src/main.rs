@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/factors", get(routes::factors))
         .route("/api/ta", get(routes::ta))
         .route("/api/ta/stats", get(routes::ta_stats))
+        .route("/api/ta/modulation_check", get(routes::ta_modulation_check))
         .route("/api/backtest", post(routes::backtest))
         .route("/api/evolve", post(routes::evolve_start))
         .route("/api/evolve/status", get(routes::evolve_status))

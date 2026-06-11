@@ -766,6 +766,71 @@ pub async fn ta_stats(
     Ok(Json(val))
 }
 
+#[derive(Deserialize)]
+pub struct ModCheckQuery {
+    symbol: String,
+    #[serde(default = "default_interval_1d")]
+    interval: String,
+    #[serde(default = "default_mod_days")]
+    days: i64,
+}
+fn default_interval_1d() -> String {
+    "1d".into()
+}
+fn default_mod_days() -> i64 {
+    1460
+}
+
+/// 经典信号仓位调制 A/B 验证：同一冠军策略，base vs 调制后，全套回测指标对比
+pub async fn ta_modulation_check(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<ModCheckQuery>,
+) -> AppResult<impl IntoResponse> {
+    let key = format!("{}|{}", q.symbol.to_uppercase(), q.interval);
+    let spec = {
+        let champs = state.champions.lock().unwrap();
+        champs
+            .get(&key)
+            .and_then(|c| c.spec.clone())
+            .ok_or_else(|| bad(format!("{key} 无冠军策略")))?
+    };
+    let kq = KlineQuery {
+        symbol: q.symbol.clone(),
+        interval: q.interval.clone(),
+        days: q.days,
+    };
+    let (klines, interval) = load_klines(&state, &kq).await?;
+    if klines.len() < 300 {
+        return Err(bad("not enough data"));
+    }
+    let (bars_per_year, cost) = market_params(&q.symbol, interval);
+    let base = spec.signals(&klines);
+    let factors = crate::paper::ta_modulation_factors(&klines, &base);
+    let apply = |sel: &dyn Fn(f64) -> f64| -> Vec<f64> {
+        base.iter()
+            .zip(&factors)
+            .map(|(p, f)| (p * sel(*f)).clamp(-1.0, 1.0))
+            .collect()
+    };
+    let boosted = factors.iter().filter(|f| **f > 1.0).count();
+    let cut = factors.iter().filter(|f| **f < 1.0).count();
+
+    let run = |targets: &[f64]| {
+        let sigs = qbacktest::to_signals(&klines, targets);
+        qbacktest::run(&klines, &sigs, cost, bars_per_year, 1).metrics
+    };
+    Ok(Json(json!({
+        "key": key,
+        "bars": klines.len(),
+        "boosted_bars": boosted,
+        "cut_bars": cut,
+        "base": run(&base),
+        "modulated": run(&apply(&|f| f)),
+        "boost_only": run(&apply(&|f: f64| f.max(1.0))),
+        "cut_only": run(&apply(&|f: f64| f.min(1.0))),
+    })))
+}
+
 pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,

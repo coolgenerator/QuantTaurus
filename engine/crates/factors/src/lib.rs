@@ -9,6 +9,8 @@
 use qcore::Kline;
 use serde::{Deserialize, Serialize};
 
+pub mod ta_rules;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactorKind {
