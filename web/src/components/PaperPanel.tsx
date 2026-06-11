@@ -257,8 +257,12 @@ export default function PaperPanel() {
               >
                 <span>
                   {s.symbol}
-                  <span className={isActive ? 'text-neon-cyan/60' : 'text-slate-600'}> · </span>
-                  {s.interval}
+                  {s.interval !== '1d' && (
+                    <>
+                      <span className={isActive ? 'text-neon-cyan/60' : 'text-slate-600'}> · </span>
+                      {s.interval}
+                    </>
+                  )}
                 </span>
                 <span
                   className={`font-bold ${tabPnl >= 0 ? 'text-neon-green' : 'text-neon-red'}`}

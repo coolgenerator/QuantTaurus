@@ -17,8 +17,7 @@ import {
   type ChampionRegistryMap,
   type CostModel,
   type SpecKind,
-  type StrategySpec,
-} from '../api'
+  type StrategySpec, slotLabel,} from '../api'
 import { isCrypto } from './TopBar'
 import { useWsMessages } from '../ws'
 
@@ -264,10 +263,10 @@ function FamilyCard({
               <button
                 key={inst.key}
                 onClick={() => onJump(inst.key)}
-                title={`点击定位到 ${inst.key} 的冠军档案卡`}
+                title={`点击定位到 ${slotLabel(inst.key)} 的冠军档案卡`}
                 className="rounded-full border border-neon-green/40 bg-neon-green/10 px-2 py-0.5 font-mono text-[10px] font-bold text-neon-green transition hover:border-neon-green/80 hover:bg-neon-green/20 hover:shadow-[0_0_8px_rgba(74,222,128,0.4)]"
               >
-                {inst.key}
+                {slotLabel(inst.key)}
                 {inst.holdoutSharpe !== null && (
                   <span className="font-medium"> ({inst.holdoutSharpe.toFixed(2)})</span>
                 )}
@@ -515,7 +514,7 @@ function ResultSection({ meta, result }: { meta: RunMeta; result: BacktestResult
     <div className="mt-4 rounded-xl border border-neon-cyan/25 bg-black/30 p-4 shadow-[0_0_18px_rgba(34,211,238,0.12)]">
       <div className="flex flex-wrap items-baseline gap-2">
         <h3 className="font-mono text-base font-extrabold tracking-wide text-slate-100">
-          {meta.key} <span className="text-sm font-medium text-slate-500">回测验证</span>
+          {slotLabel(meta.key)} <span className="text-sm font-medium text-slate-500">回测验证</span>
         </h3>
         <span className="ml-auto font-mono text-[10px] text-slate-500">
           回测区间 {rangeStr} · {meta.days}d · 成本假设:{' '}

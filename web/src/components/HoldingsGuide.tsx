@@ -8,8 +8,7 @@ import {
   type OptionExitDynamic,
   type OptionPaperPosition,
   type PaperSession,
-  type TradePlan,
-} from '../api'
+  type TradePlan, slotLabel,} from '../api'
 
 const OPT_SERVICE_HINT =
   '期权服务未运行：python3 bridge/options_service.py（需 OpenD 已登录）'
@@ -220,7 +219,7 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
                 key={key}
                 className="border-b border-white/[0.03] font-mono text-xs transition hover:bg-white/[0.06]"
               >
-                <td className="px-2.5 py-2 font-bold text-slate-100">{key}</td>
+                <td className="px-2.5 py-2 font-bold text-slate-100">{slotLabel(key)}</td>
                 <td className="px-2.5 py-2">
                   <span className={`badge border ${badge.cls}`}>{badge.text}</span>
                 </td>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchPortfolio, fmtNum, fmtPct, type PortfolioReport, type PortfolioSlot } from '../api'
+import { fetchPortfolio, fmtNum, fmtPct, type PortfolioReport, type PortfolioSlot, slotLabel} from '../api'
 
 /** Signed weight color: long green / short red / flat slate. */
 function weightTone(w: number): string {
@@ -53,7 +53,7 @@ function WeightBar({ weight, maxAbs }: { weight: number; maxAbs: number }) {
 function SlotRow({ slot, maxAbs }: { slot: PortfolioSlot; maxAbs: number }) {
   return (
     <tr className="border-t border-white/5 transition hover:bg-white/5">
-      <td className="px-2 py-2 font-mono text-xs font-bold text-slate-200">{slot.key}</td>
+      <td className="px-2 py-2 font-mono text-xs font-bold text-slate-200">{slotLabel(slot.key)}</td>
       <td className={`px-2 py-2 text-right font-mono text-xs ${weightTone(slot.raw_position)}`}>
         {fmtPct(slot.raw_position, 1)}
       </td>

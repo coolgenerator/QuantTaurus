@@ -288,6 +288,12 @@ export function fetchSymbolTaStats(symbol: string, interval: string): Promise<Sy
   return getJson(`/api/ta/stats?interval=${interval}&symbol=${symbol}`)
 }
 
+/** 槽位键显示名："AAPL|1d" → "AAPL"；非默认周期保留紧凑后缀 "BTCUSDT|1h" → "BTCUSDT·1h"。 */
+export function slotLabel(key: string): string {
+  const [sym, iv] = key.split('|')
+  return !iv || iv === '1d' ? sym : `${sym}·${iv}`
+}
+
 // ---------- Trade plans ----------
 
 export interface TradePlan {

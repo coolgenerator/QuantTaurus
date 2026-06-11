@@ -35,8 +35,12 @@ function SlotCard({ record }: { record: ChampionRecord }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-sm font-bold text-slate-200">
           {record.symbol}
-          <span className="text-slate-600"> · </span>
-          <span className="text-slate-400">{record.interval}</span>
+          {record.interval !== '1d' && (
+            <>
+              <span className="text-slate-600"> · </span>
+              <span className="text-slate-400">{record.interval}</span>
+            </>
+          )}
         </span>
         {record.spec ? (
           <span className="badge border border-neon-purple/40 bg-neon-purple/10 font-mono text-neon-purple">

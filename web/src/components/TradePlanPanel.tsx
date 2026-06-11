@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchTradePlans, fmtNum, type TradePlan } from '../api'
+import { fetchTradePlans, fmtNum, type TradePlan, slotLabel} from '../api'
 
 type Direction = 'long' | 'short' | 'flat'
 
@@ -131,7 +131,7 @@ function PlanCard({
         <button
           onClick={onNavigateStrategies}
           className="badge border border-white/10 bg-white/5 font-mono font-medium text-slate-400 transition hover:border-neon-cyan/50 hover:text-neon-cyan"
-          title={`信号策略: ${plan.strategy}（${plan.key} 冠军）· 点击查看策略档案`}
+          title={`信号策略: ${plan.strategy}（${slotLabel(plan.key)} 冠军）· 点击查看策略档案`}
         >
           {plan.interval} · {plan.strategy}
         </button>
@@ -209,7 +209,7 @@ function PlanCard({
         title="点击查看策略档案"
       >
         信号策略: <span className="font-bold text-neon-purple">{plan.strategy}</span>
-        <span className="text-slate-600">（{plan.key} 冠军）</span> ↗
+        <span className="text-slate-600">（{slotLabel(plan.key)} 冠军）</span> ↗
       </button>
     </div>
   )
