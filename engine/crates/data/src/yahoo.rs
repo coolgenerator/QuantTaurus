@@ -119,9 +119,11 @@ impl YahooClient {
         let result = &v["chart"]["result"][0];
         anyhow::ensure!(!result.is_null(), "yahoo: no result for {symbol}");
 
-        let ts = result["timestamp"]
-            .as_array()
-            .context("yahoo: no timestamps")?;
+        // 增量窗口内无新bar（夜间/周末常见）：Yahoo 返回无 timestamp 的空结果，
+        // 视为正常的零新增而非错误
+        let Some(ts) = result["timestamp"].as_array() else {
+            return Ok(Vec::new());
+        };
         let q = &result["indicators"]["quote"][0];
         let (open, high, low, close, vol) = (
             q["open"].as_array().context("open")?,
