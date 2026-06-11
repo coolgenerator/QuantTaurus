@@ -72,6 +72,20 @@ PAPER_FILE = os.path.join(
 
 log = logging.getLogger("options-service")
 _quote_lock = threading.Lock()
+# OpenD 期权接口限频：官方 10 次/30 秒，留余量按 8 次执行
+_od_calls: list[float] = []
+OD_MAX_PER_30S = 8
+
+
+def _od_throttle():
+    while True:
+        now = time.time()
+        while _od_calls and now - _od_calls[0] > 30:
+            _od_calls.pop(0)
+        if len(_od_calls) < OD_MAX_PER_30S:
+            _od_calls.append(now)
+            return
+        time.sleep(30 - (now - _od_calls[0]) + 0.1)
 _cache: dict[str, tuple[float, dict]] = {}
 
 quote_ctx: OpenQuoteContext | None = None
@@ -89,7 +103,13 @@ def cached(key: str, fn, ttl: float = CACHE_TTL):
     hit = _cache.get(key)
     if hit and now - hit[0] < ttl:
         return hit[1]
-    val = fn()
+    try:
+        val = fn()
+    except Exception:
+        if hit:
+            log.exception("refresh failed for %s, serving stale", key)
+            return hit[1]
+        raise
     _cache[key] = (now, val)
     return val
 
@@ -97,6 +117,7 @@ def cached(key: str, fn, ttl: float = CACHE_TTL):
 def fetch_expirations(symbol: str) -> dict:
     code = f"US.{symbol.upper()}"
     with _quote_lock:
+        _od_throttle()
         ret, df = get_ctx().get_option_expiration_date(code=code)
     if ret != RET_OK:
         raise RuntimeError(f"get_option_expiration_date: {df}")
@@ -107,6 +128,7 @@ def fetch_chain(symbol: str, expiry: str) -> dict:
     code = f"US.{symbol.upper()}"
     ctx = get_ctx()
     with _quote_lock:
+        _od_throttle()
         ret, df = ctx.get_option_chain(
             code=code, start=expiry, end=expiry, option_type=OptionType.ALL
         )
@@ -262,7 +284,10 @@ def pick_contract(chain: dict, direction: int) -> dict | None:
 
 def build_option_plans() -> dict:
     plans = []
-    for sp in fetch_stock_plans():
+    stock_plans = sorted(
+        fetch_stock_plans(), key=lambda p: abs(p.get("target_position", 0)), reverse=True
+    )[:12]  # 限频预算：每标的≥2次OpenD调用，12个 ≈ 1.5个30秒窗口
+    for sp in stock_plans:
         sym = sp["symbol"]
         if sym.endswith(("USDT", "USDC", "BUSD")):
             continue  # 期权仅美股
@@ -663,7 +688,12 @@ class Handler(BaseHTTPRequestHandler):
                 symbol, expiry = qs["symbol"][0], qs["expiry"][0]
                 self._send(200, cached(f"chain:{symbol}:{expiry}", lambda: fetch_chain(symbol, expiry)))
             elif parsed.path == "/plans":
-                self._send(200, cached("option_plans", build_option_plans))
+                hit = _cache.get("option_plans")
+                if hit:
+                    self._send(200, hit[1])
+                else:
+                    self._send(200, {"plans": [], "warming_up": True,
+                                     "note": "期权计划后台预热中（OpenD限频，约1-2分钟）"})
             elif parsed.path == "/paper-options":
                 self._send(200, paper_state())
             elif parsed.path == "/account":
@@ -683,9 +713,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(502, {"error": str(e)})
 
 
+def plans_refresher():
+    """后台预热期权计划：HTTP 请求永远直接读缓存（秒回），重活在这条线程里干。"""
+    while True:
+        try:
+            val = build_option_plans()
+            _cache["option_plans"] = (time.time(), val)
+        except Exception:
+            log.exception("plans refresh failed (will retry)")
+        time.sleep(CACHE_TTL)
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     threading.Thread(target=paper_loop, daemon=True, name="options-paper").start()
+    threading.Thread(target=plans_refresher, daemon=True, name="options-plans").start()
     srv = ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), Handler)
     log.info("options service on http://%s:%d (OpenD %s:%d)", LISTEN_HOST, LISTEN_PORT, OPEND_HOST, OPEND_PORT)
     srv.serve_forever()
