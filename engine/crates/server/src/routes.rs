@@ -263,6 +263,50 @@ pub async fn evolve_start(
     Ok(Json(json!({"started": true})))
 }
 
+#[derive(Deserialize)]
+pub struct SweepReq {
+    /// 不传 = ta_stats 全宇宙 + 3 个加密币
+    pub symbols: Option<Vec<String>>,
+    #[serde(default = "default_interval_1d_sweep")]
+    pub interval: String,
+    #[serde(default = "default_sweep_days")]
+    pub days: i64,
+}
+fn default_interval_1d_sweep() -> String {
+    "1d".into()
+}
+fn default_sweep_days() -> i64 {
+    3650
+}
+
+pub fn default_sweep_symbols() -> Vec<String> {
+    let mut v: Vec<String> = crate::ta_stats::UNIVERSE.iter().map(|s| s.to_string()).collect();
+    v.extend(["BTCUSDT", "ETHUSDT", "SOLUSDT"].map(String::from));
+    v
+}
+
+/// 全宇宙进化扫描：顺序对每个标的跑 evolve（margin+floor 闸门晋升）
+pub async fn evolve_sweep_start(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SweepReq>,
+) -> AppResult<impl IntoResponse> {
+    {
+        let st = state.sweep_status.lock().unwrap();
+        if matches!(*st, crate::state::SweepStatus::Running { .. }) {
+            return Err(bad("sweep already running"));
+        }
+    }
+    let symbols = req.symbols.unwrap_or_else(default_sweep_symbols);
+    let total = symbols.len();
+    crate::state::launch_sweep(state, symbols, req.interval, req.days);
+    Ok(Json(json!({"started": true, "total": total})))
+}
+
+pub async fn evolve_sweep_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let st = state.sweep_status.lock().unwrap().clone();
+    Json(st)
+}
+
 pub async fn evolve_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let st = state.evolve_status.lock().unwrap().clone();
     Json(st)

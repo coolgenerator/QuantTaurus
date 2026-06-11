@@ -90,6 +90,8 @@ pub struct AppState {
     pub paper_path: PathBuf,
     /// 因子挖掘任务状态与因子库
     pub mine_status: Mutex<crate::mine_job::MineStatus>,
+    /// 全宇宙进化扫描状态
+    pub sweep_status: Mutex<SweepStatus>,
     pub factor_lib_path: PathBuf,
 }
 
@@ -129,6 +131,7 @@ impl AppState {
             paper: Mutex::new(paper),
             sector_cache: Mutex::new(None),
             ta_stats_cache: Mutex::new(HashMap::new()),
+            sweep_status: Mutex::new(SweepStatus::Idle),
             paper_path,
             mine_status: Mutex::new(crate::mine_job::MineStatus::Idle),
             factor_lib_path: PathBuf::from(data_dir).join("factors.json"),
@@ -173,6 +176,175 @@ impl AppState {
 
 /// 在 blocking 线程上启动一轮进化（路由和自动再训练调度器共用）。
 /// 调用前须自行确认 evolve_status 不在 Running。
+/// 单标的扫描结果（按完成顺序追加）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SweepResult {
+    pub symbol: String,
+    pub promoted: bool,
+    pub holdout_sharpe: f64,
+    pub valid_sharpe: f64,
+    pub kind: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SweepStatus {
+    Idle,
+    Running {
+        started_ms: i64,
+        total: usize,
+        current: String,
+        results: Vec<SweepResult>,
+    },
+    Done {
+        started_ms: i64,
+        finished_ms: i64,
+        results: Vec<SweepResult>,
+    },
+}
+
+/// 晋升逻辑（launch_evolve 与 sweep 共用）
+fn apply_promotion(
+    state: &std::sync::Arc<AppState>,
+    symbol: &str,
+    interval_s: &str,
+    report: &qevolve::EvolveReport,
+) {
+    if !report.promoted {
+        return;
+    }
+    let key = champ_key(symbol, interval_s);
+    let mut champs = state.champions.lock().unwrap();
+    let rec = champs.entry(key).or_default();
+    rec.spec = Some(report.champion.spec.clone());
+    rec.symbol = symbol.to_string();
+    rec.interval = interval_s.to_string();
+    rec.updated_ms = now_ms();
+    rec.lineage.push(LineageEntry {
+        spec: report.champion.spec.clone(),
+        holdout_sharpe: report
+            .champion
+            .holdout_metrics
+            .as_ref()
+            .map_or(0.0, |m| m.sharpe),
+        promoted_ms: now_ms(),
+    });
+    drop(champs);
+    state.save_champions();
+}
+
+/// 全宇宙进化扫描：逐标的顺序进化（每标的~1-2分钟CPU），晋升走与单跑相同的
+/// margin+floor 闸门。自进化模式的调度层：可由 /api/evolve_sweep 手动触发，
+/// 或 QHH_AUTOSWEEP_HOURS 周期自动触发。
+pub fn launch_sweep(
+    state: std::sync::Arc<AppState>,
+    symbols: Vec<String>,
+    interval_s: String,
+    days: i64,
+) {
+    let total = symbols.len();
+    *state.sweep_status.lock().unwrap() = SweepStatus::Running {
+        started_ms: now_ms(),
+        total,
+        current: String::new(),
+        results: Vec::new(),
+    };
+    tokio::spawn(async move {
+        let started_ms = now_ms();
+        let mut results: Vec<SweepResult> = Vec::new();
+        let Some(interval) = qcore::Interval::parse(&interval_s) else {
+            *state.sweep_status.lock().unwrap() = SweepStatus::Done {
+                started_ms,
+                finished_ms: now_ms(),
+                results,
+            };
+            return;
+        };
+        for sym in symbols {
+            if let SweepStatus::Running { current, results: r, .. } =
+                &mut *state.sweep_status.lock().unwrap()
+            {
+                *current = sym.clone();
+                *r = results.clone();
+            }
+            let end = now_ms();
+            let res = async {
+                let klines = state
+                    .store
+                    .get(&sym, interval, end - days * 86_400_000, end)
+                    .await?;
+                let n = klines.len();
+                // 自适应窗口：留出90 + 验证600(4折)，其余训练；历史太短的标的跳过
+                anyhow::ensure!(n >= 1100, "history too short: {n} bars");
+                let valid_bars = 600.min((n - 90) / 2);
+                let train_bars = n - valid_bars - 90 - 5;
+                let (bars_per_year, cost) = crate::routes::market_params(&sym, interval);
+                let cfg = qevolve::EvolveConfig {
+                    population: 24,
+                    offspring: 48,
+                    generations: 10,
+                    train_bars,
+                    valid_bars,
+                    valid_folds: 4,
+                    holdout_bars: 90,
+                    bars_per_year,
+                    cost,
+                    seed: 11,
+                    promotion_margin: 0.1,
+                    promotion_floor: 0.0,
+                };
+                let incumbent = {
+                    let champs = state.champions.lock().unwrap();
+                    champs
+                        .get(&champ_key(&sym, &interval_s))
+                        .and_then(|c| c.spec.clone())
+                };
+                let report = tokio::task::spawn_blocking(move || {
+                    qevolve::evolve(&klines, &cfg, incumbent.as_ref())
+                })
+                .await??;
+                anyhow::Ok(report)
+            }
+            .await;
+
+            let entry = match res {
+                Ok(report) => {
+                    apply_promotion(&state, &sym, &interval_s, &report);
+                    SweepResult {
+                        symbol: sym.clone(),
+                        promoted: report.promoted,
+                        holdout_sharpe: report
+                            .champion
+                            .holdout_metrics
+                            .as_ref()
+                            .map_or(f64::NAN, |m| m.sharpe),
+                        valid_sharpe: report.champion.valid_metrics.sharpe,
+                        kind: report.champion.spec.name().to_string(),
+                        error: None,
+                    }
+                }
+                Err(e) => SweepResult {
+                    symbol: sym.clone(),
+                    promoted: false,
+                    holdout_sharpe: f64::NAN,
+                    valid_sharpe: f64::NAN,
+                    kind: String::new(),
+                    error: Some(e.to_string()),
+                },
+            };
+            results.push(entry);
+        }
+        let n_promoted = results.iter().filter(|r| r.promoted).count();
+        tracing::info!(n_promoted, total = results.len(), "evolve sweep finished");
+        *state.sweep_status.lock().unwrap() = SweepStatus::Done {
+            started_ms,
+            finished_ms: now_ms(),
+            results,
+        };
+    });
+}
+
 pub fn launch_evolve(
     state: std::sync::Arc<AppState>,
     symbol: String,

@@ -44,6 +44,37 @@ async fn main() -> anyhow::Result<()> {
         "SOLUSDT".into(),
     ]);
 
+    // 自动扫描调度器：每 QHH_AUTOSWEEP_HOURS 小时全宇宙进化扫描（默认 24，0=关闭）
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let hours: u64 = std::env::var("QHH_AUTOSWEEP_HOURS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(24);
+            if hours == 0 {
+                return;
+            }
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(hours * 3600)).await;
+                let running = matches!(
+                    *st.sweep_status.lock().unwrap(),
+                    state::SweepStatus::Running { .. }
+                );
+                if running {
+                    continue;
+                }
+                tracing::info!("auto-sweep starting (every {hours}h)");
+                state::launch_sweep(
+                    st.clone(),
+                    routes::default_sweep_symbols(),
+                    "1d".into(),
+                    3650,
+                );
+            }
+        });
+    }
+
     // 自动再训练调度器：每 QHH_AUTORETRAIN_HOURS 小时（默认 6，0=关闭）
     // 用最新数据重跑 walk-forward 进化，冠军仅在留出集胜出时热更新
     spawn_auto_retrain(state.clone());
@@ -65,6 +96,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/backtest", post(routes::backtest))
         .route("/api/evolve", post(routes::evolve_start))
         .route("/api/evolve/status", get(routes::evolve_status))
+        .route("/api/evolve_sweep", post(routes::evolve_sweep_start))
+        .route("/api/evolve_sweep/status", get(routes::evolve_sweep_status))
         .route("/api/champion", get(routes::champion))
         .route("/api/paper", get(routes::paper))
         .route("/api/sectors", get(routes::sectors))
