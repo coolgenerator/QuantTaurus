@@ -756,12 +756,30 @@ class Handler(BaseHTTPRequestHandler):
 PLANS_REFRESH_SEC = 300
 
 
+def _prewarm_expirations():
+    """预热全部冠军标的的到期日列表（TTL 1h）：前端切标的时日期瞬出。"""
+    try:
+        syms = sorted({
+            p["symbol"] for p in fetch_stock_plans()
+            if not p["symbol"].endswith(("USDT", "USDC", "BUSD"))
+        })
+    except Exception:
+        return
+    for sym in syms:
+        _yield_to_interactive()
+        try:
+            cached(f"exp:{sym}", lambda s=sym: fetch_expirations(s), ttl=3600)
+        except Exception:
+            log.warning("exp prewarm failed for %s", sym)
+
+
 def plans_refresher():
     """后台预热期权计划：HTTP 请求永远直接读缓存（秒回），重活在这条线程里干。"""
     while True:
         try:
             val = build_option_plans()
             _cache["option_plans"] = (time.time(), val)
+            _prewarm_expirations()
         except Exception:
             log.exception("plans refresh failed (will retry)")
         time.sleep(PLANS_REFRESH_SEC)

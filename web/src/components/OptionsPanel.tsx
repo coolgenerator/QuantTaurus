@@ -475,9 +475,9 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
     void loadExpirations(symbol)
   }, [symbol, loadExpirations])
 
-  const loadChain = useCallback(async () => {
+  const loadChain = useCallback(async (expiryArg?: string) => {
     // expirations 为空（如上次拉取失败）先重拉，再用最近到期日加载。
-    let exp = expiry
+    let exp = expiryArg ?? expiry
     if (!exp) {
       const exps = await loadExpirations(symbol)
       exp = exps[0] ?? ''
@@ -538,7 +538,11 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
           <select
             className="select-dark min-w-[140px] font-mono"
             value={expiry}
-            onChange={(e) => setExpiry(e.target.value)}
+            onChange={(e) => {
+              setExpiry(e.target.value)
+              // 选中日期即自动加载该到期日的链，无需再点按钮
+              if (e.target.value) void loadChain(e.target.value)
+            }}
             disabled={loadingExp || expirations.length === 0}
           >
             {loadingExp && <option value="">加载中…</option>}
@@ -556,13 +560,13 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
           onClick={() => void loadChain()}
           disabled={loadingChain || loadingExp}
         >
-          {loadingChain ? '加载中…' : '加载期权链'}
+          {loadingChain ? '加载中…' : chain ? '刷新' : '加载期权链'}
         </button>
 
         {loadingChain && (
           <span className="flex items-center gap-2 self-center text-xs text-slate-400">
             <span className="h-2 w-2 animate-pulse rounded-full bg-neon-cyan" />
-            首次请求需向 OpenD 拉取全链，约 5~20 秒…
+            拉取全链中，约 1~3 秒…
           </span>
         )}
       </section>
