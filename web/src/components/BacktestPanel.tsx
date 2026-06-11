@@ -130,12 +130,33 @@ function Metric({
 
 const signTone = (v: number): 'pos' | 'neg' => (v >= 0 ? 'pos' : 'neg')
 
+/** 周期感知默认回看：保证bar数充足（日线4年≈1000根，周/月线拉满20年） */
+const defaultDays = (iv: string) =>
+  iv === '1w' || iv === '1mo' ? 7300 : iv === '1d' ? 1460 : iv === '1m' ? 7 : iv === '5m' || iv === '30m' ? 59 : 365
+const DAYS_CHOICES = [365, 730, 1460, 3650, 7300] as const
+const daysLabel = (d: number) => (d >= 365 ? `${Math.round(d / 365)}年` : `${d}天`)
+
 export default function BacktestPanel({ symbol, interval }: Props) {
   const [kind, setKind] = useState<FormSpecKind>('tsmom')
   const [params, setParams] = useState<Record<string, number>>(SPEC_FORMS.tsmom.defaults)
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [running, setRunning] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const [days, setDays] = useState(() => defaultDays(interval))
   const [error, setError] = useState<string | null>(null)
+
+  // 周期切换 → 重置回看窗口为该周期的合理默认
+  useEffect(() => {
+    setDays(defaultDays(interval))
+  }, [interval])
+
+  // 运行计时器：给长回测以进度感
+  useEffect(() => {
+    if (!running) return
+    setElapsed(0)
+    const t = window.setInterval(() => setElapsed((e) => e + 1), 1000)
+    return () => window.clearInterval(t)
+  }, [running])
 
   const [costOpen, setCostOpen] = useState(false)
   const [costPreset, setCostPreset] = useState<CostPresetKey>('auto')
@@ -169,7 +190,7 @@ export default function BacktestPanel({ symbol, interval }: Props) {
     setError(null)
     try {
       const spec = { kind, ...params } as unknown as StrategySpec
-      const res = await runBacktest(symbol, interval, 365, spec, effectiveCost)
+      const res = await runBacktest(symbol, interval, days, spec, effectiveCost)
       setResult(res)
       setUsedCost({ preset: costPreset, cost: effectiveCost })
     } catch (e) {
@@ -230,7 +251,7 @@ export default function BacktestPanel({ symbol, interval }: Props) {
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <h2 className="panel-title">Backtest Lab</h2>
         <span className="ml-auto font-mono text-xs text-slate-500">
-          {symbol} · {interval} · 365d
+          {symbol} · {interval} · {daysLabel(days)}
         </span>
       </div>
 
@@ -265,9 +286,26 @@ export default function BacktestPanel({ symbol, interval }: Props) {
           </label>
         ))}
 
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">回看窗口</span>
+          <select className="select-dark font-mono" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            {DAYS_CHOICES.map((d) => (
+              <option key={d} value={d}>
+                {daysLabel(d)}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <button className="btn-neon" onClick={run} disabled={running}>
-          {running ? 'Running…' : '运行回测'}
+          {running ? `回测中 ${elapsed}s…` : '运行回测'}
         </button>
+        {running && (
+          <span className="flex items-center gap-2 self-center text-xs text-slate-400">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-neon-cyan" />
+            拉取{daysLabel(days)}K线并仿真（首次下载历史数据可能 10~30 秒）…
+          </span>
+        )}
       </div>
 
       {/* 成本模型折叠区 */}
@@ -359,6 +397,12 @@ export default function BacktestPanel({ symbol, interval }: Props) {
               label="DSR Prob"
               value={fmtPct(m.deflated_sharpe_prob, 1)}
               tone={m.deflated_sharpe_prob >= 0.5 ? 'pos' : 'neg'}
+            />
+            <Metric label="Hit Rate" value={fmtPct(m.hit_rate, 1)} tone={m.hit_rate >= 0.5 ? 'pos' : 'neg'} />
+            <Metric
+              label="Profit Factor"
+              value={fmtNum(m.profit_factor)}
+              tone={m.profit_factor >= 1 ? 'pos' : 'neg'}
             />
           </div>
           <div ref={chartDivRef} className="h-56 w-full" />

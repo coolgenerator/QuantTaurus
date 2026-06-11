@@ -199,8 +199,17 @@ pub async fn backtest(
         days: req.days,
     };
     let (klines, interval) = load_klines(&state, &q).await?;
-    if klines.len() < 300 {
-        return Err(bad("not enough data"));
+    // 周/月线全历史也只有几百根bar，门槛按周期放宽
+    let min_bars = match interval {
+        Interval::W1 | Interval::Mon1 => 100,
+        _ => 300,
+    };
+    if klines.len() < min_bars {
+        return Err(bad(format!(
+            "数据不足：{} 根bar（需≥{}），请增大回看天数",
+            klines.len(),
+            min_bars
+        )));
     }
     let (bars_per_year, default_cost) = market_params(&q.symbol, interval);
     let cost = req.cost.unwrap_or(default_cost);
