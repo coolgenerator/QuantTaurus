@@ -30,7 +30,7 @@ interface FieldDef {
 
 /** Spec kinds with flat numeric params, editable in the manual backtest form.
  * 'ensemble' is evolution-only (nested members), so it is excluded here. */
-type FormSpecKind = Exclude<SpecKind, 'ensemble'>
+type FormSpecKind = Exclude<SpecKind, 'ensemble' | 'rule_vote'>
 
 const SPEC_FORMS: Record<FormSpecKind, { label: string; fields: FieldDef[]; defaults: Record<string, number> }> = {
   tsmom: {

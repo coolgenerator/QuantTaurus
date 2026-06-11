@@ -35,6 +35,7 @@ export type StrategySpec =
       w_flow: number
       w_vol: number
     }
+  | { kind: 'rule_vote'; rule_mask: number; min_votes: number; hold_bars: number }
   | { kind: 'ensemble'; members: StrategySpec[] }
 
 export type SpecKind = StrategySpec['kind']

@@ -7,6 +7,34 @@
 use crate::*;
 use qcore::Kline;
 
+/// 全部买入类规则的稳定注册表（RuleVote 策略掩码按此下标寻址；只增不删不重排）
+pub const BUY_RULES: &[&str] = &[
+    "MACD金叉",
+    "RSI超卖回升",
+    "布林下轨收回",
+    "KDJ低位金叉",
+    "均线金叉(20/50)",
+    "多头排列成立",
+    "唐奇安20日上破",
+    "放量突破20日高",
+    "神奇九转·九买",
+    "MACD底背离",
+    "RSI底背离",
+    "看涨吞没",
+    "锤子线",
+    "倒锤线",
+    "启明星",
+    "红三兵",
+    "低位十字星",
+    "双底颈线突破",
+    "头肩底突破",
+    "SuperTrend翻多",
+];
+
+pub fn buy_rule_index(rule: &str) -> Option<usize> {
+    BUY_RULES.iter().position(|r| *r == rule)
+}
+
 /// 单条规则命中：bar下标 + 方向（1买/-1卖）+ 规则名
 #[derive(Debug, Clone)]
 pub struct RuleHit {

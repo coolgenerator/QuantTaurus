@@ -74,6 +74,7 @@ fn horizon_days(spec: &StrategySpec) -> f64 {
         StrategySpec::MultiFactor { mom_lookback, .. } => {
             (*mom_lookback as f64 / 5.0).clamp(5.0, 30.0)
         }
+        StrategySpec::RuleVote { hold_bars, .. } => (*hold_bars as f64).clamp(3.0, 30.0),
         StrategySpec::Ensemble { members } => {
             if members.is_empty() {
                 10.0
@@ -127,6 +128,21 @@ fn rationale(spec: &StrategySpec, klines: &[Kline], target: f64) -> String {
                 "多因子打分: 动量{}×{w_mom:.1} + 资金流{f:.2}×{w_flow:.1} − 波动{:.2}%×{w_vol:.1} → {}",
                 pct(m.exp_m1_safe()),
                 v * 100.0,
+                dir_word(target)
+            )
+        }
+        StrategySpec::RuleVote { rule_mask, min_votes, hold_bars } => {
+            let names: Vec<&str> = qfactors::ta_rules::BUY_RULES
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| rule_mask >> i & 1 == 1)
+                .map(|(_, r)| *r)
+                .collect();
+            format!(
+                "经典规则投票：{{{}}} 当日≥{}票进场，持有{}根bar（卖出共振提前离场）→ {}",
+                names.join("、"),
+                min_votes,
+                hold_bars,
                 dir_word(target)
             )
         }
