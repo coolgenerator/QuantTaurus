@@ -14,6 +14,8 @@ protobuf 协议，这个 sidecar 用 futu-api 取期权链 + 快照（IV/希腊�
     GET /chain?symbol=SPY&expiry=2026-06-19
     GET /plans          期权交易计划（从股票冠军信号推导）
     GET /paper-options  期权模拟盘状态
+    GET /account                    moomoo 模拟账户余额+持仓（含自算今日盈亏）
+    GET /account/orders?code=US.AAPL  单标的历史买卖订单
 """
 
 import json
@@ -27,7 +29,18 @@ import urllib.request
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from futu import OpenQuoteContext, OptionType, RET_OK
+from futu import (
+    Currency,
+    OpenQuoteContext,
+    OpenSecTradeContext,
+    OptionType,
+    RET_OK,
+    SecurityFirm,
+    TrdEnv,
+    TrdMarket,
+)
+
+from account_math import parse_option_code, position_pct, today_pl
 
 OPEND_HOST, OPEND_PORT = "127.0.0.1", 11111
 LISTEN_HOST, LISTEN_PORT = "127.0.0.1", 8788
@@ -71,10 +84,10 @@ def get_ctx() -> OpenQuoteContext:
     return quote_ctx
 
 
-def cached(key: str, fn):
+def cached(key: str, fn, ttl: float = CACHE_TTL):
     now = time.time()
     hit = _cache.get(key)
-    if hit and now - hit[0] < CACHE_TTL:
+    if hit and now - hit[0] < ttl:
         return hit[1]
     val = fn()
     _cache[key] = (now, val)
@@ -466,6 +479,165 @@ def paper_loop() -> None:
         time.sleep(300)
 
 
+# ====================== moomoo 模拟账户（余额/持仓/订单） ======================
+
+ACCOUNT_TTL = 15      # 资金/持仓接口限频 10次/30s，必须缓存
+ORDERS_TTL = 60       # 历史订单接口同样限频；点击才拉取
+HISTORY_START = "2024-01-01"
+
+_trade_lock = threading.Lock()
+trade_ctx: OpenSecTradeContext | None = None
+
+
+def get_trd() -> OpenSecTradeContext:
+    global trade_ctx
+    if trade_ctx is None:
+        trade_ctx = OpenSecTradeContext(
+            filter_trdmarket=TrdMarket.US,
+            host=OPEND_HOST,
+            port=OPEND_PORT,
+            security_firm=SecurityFirm.FUTUINC,
+        )
+    return trade_ctx
+
+
+def _f(v) -> float | None:
+    """pandas/numpy 标量 → 内建 float；NaN/缺失 → None（json 安全）。"""
+    try:
+        x = float(v)
+        return x if x == x else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _df_rows(ret, df, what: str) -> list:
+    if ret != RET_OK:
+        raise RuntimeError(f"{what}: {df}")
+    return [] if df is None or len(df) == 0 else [row for _, row in df.iterrows()]
+
+
+def _today_fills() -> dict[str, tuple[list, list]]:
+    """当日订单的已成交部分 → {code: (buys, sells)}，每项 [(数量, 成交均价)]。
+
+    模拟环境不支持成交(deal)查询，用订单的 dealt_qty/dealt_avg_price 还原。
+    """
+    with _trade_lock:
+        ret, df = get_trd().order_list_query(trd_env=TrdEnv.SIMULATE)
+    out: dict[str, tuple[list, list]] = {}
+    for row in _df_rows(ret, df, "order_list_query"):
+        dealt = _f(row.get("dealt_qty")) or 0.0
+        if dealt <= 0:
+            continue
+        price = _f(row.get("dealt_avg_price")) or 0.0
+        buys, sells = out.setdefault(str(row["code"]), ([], []))
+        if "BUY" in str(row["trd_side"]).upper():
+            buys.append((dealt, price))
+        else:
+            sells.append((dealt, price))
+    return out
+
+
+def _position_snapshots(codes: list[str]) -> dict:
+    snaps = {}
+    for i in range(0, len(codes), SNAPSHOT_BATCH):
+        batch = codes[i : i + SNAPSHOT_BATCH]
+        with _quote_lock:
+            ret, df = get_ctx().get_market_snapshot(batch)
+        if ret != RET_OK:
+            log.warning("account snapshot failed: %s", df)
+            continue
+        for _, row in df.iterrows():
+            snaps[row["code"]] = row
+        if i + SNAPSHOT_BATCH < len(codes):
+            time.sleep(0.6)
+    return snaps
+
+
+def fetch_account() -> dict:
+    trd = get_trd()
+    with _trade_lock:
+        ret, fdf = trd.accinfo_query(trd_env=TrdEnv.SIMULATE, currency=Currency.USD)
+    frow = _df_rows(ret, fdf, "accinfo_query")[0]
+    funds = {k: _f(frow.get(k)) for k in ("total_assets", "cash", "market_val", "power")}
+
+    with _trade_lock:
+        ret, pdf = trd.position_list_query(trd_env=TrdEnv.SIMULATE)
+    prows = [r for r in _df_rows(ret, pdf, "position_list_query") if (_f(r.get("qty")) or 0) != 0]
+
+    fills = _today_fills()
+    snaps = _position_snapshots([str(r["code"]) for r in prows])
+    total_abs = sum(abs(_f(r.get("market_val")) or 0.0) for r in prows)
+
+    positions = []
+    for r in prows:
+        code = str(r["code"])
+        opt = parse_option_code(code)
+        mult = 100.0 if opt else 1.0
+        sign = -1.0 if str(r.get("position_side", "")).upper().endswith("SHORT") else 1.0
+        qty = sign * (_f(r.get("qty")) or 0.0)
+        snap = snaps.get(code)
+        last = (_f(snap.get("last_price")) if snap is not None else None) or _f(r.get("nominal_price"))
+        prev_close = _f(snap.get("prev_close_price")) if snap is not None else None
+        avg_cost = _f(r.get("cost_price"))
+        market_val = _f(r.get("market_val")) or 0.0
+        pl_val = _f(r.get("pl_val"))
+        cost_basis = abs(qty) * (avg_cost or 0.0) * mult
+        buys, sells = fills.get(code, ([], []))
+        positions.append({
+            "code": code,
+            "symbol": opt["underlying"] if opt else code.split(".", 1)[-1],
+            "name": str(r.get("stock_name") or ""),
+            "is_option": opt is not None,
+            "opt": opt,
+            "qty": qty,
+            "can_sell_qty": _f(r.get("can_sell_qty")),
+            "avg_cost": avg_cost,
+            "last": last,
+            "prev_close": prev_close,
+            "market_val": market_val,
+            "pl_val": pl_val,
+            "pl_pct": (pl_val / cost_basis) if pl_val is not None and cost_basis > 0 else None,
+            "today_pl": today_pl(qty, last, prev_close, buys, sells, multiplier=mult)
+            if last is not None
+            else None,
+            "pct_of_positions": position_pct(market_val, total_abs),
+        })
+    positions.sort(key=lambda p: -abs(p["market_val"]))
+    return {"funds": funds, "positions": positions, "updated_ms": int(time.time() * 1000)}
+
+
+def fetch_account_orders(code: str) -> dict:
+    trd = get_trd()
+    with _trade_lock:
+        ret_h, hdf = trd.history_order_list_query(
+            code=code, start=HISTORY_START, trd_env=TrdEnv.SIMULATE
+        )
+    with _trade_lock:
+        ret_t, tdf = trd.order_list_query(code=code, trd_env=TrdEnv.SIMULATE)
+    seen: set[str] = set()
+    orders = []
+    for row in _df_rows(ret_h, hdf, "history_order_list_query") + _df_rows(
+        ret_t, tdf, "order_list_query"
+    ):
+        oid = str(row["order_id"])
+        if oid in seen:
+            continue
+        seen.add(oid)
+        orders.append({
+            "order_id": oid,
+            "side": "BUY" if "BUY" in str(row["trd_side"]).upper() else "SELL",
+            "status": str(row["order_status"]),
+            "qty": _f(row.get("qty")),
+            "dealt_qty": _f(row.get("dealt_qty")) or 0.0,
+            "dealt_avg_price": _f(row.get("dealt_avg_price")),
+            "price": _f(row.get("price")),
+            "create_time": str(row.get("create_time") or ""),
+            "updated_time": str(row.get("updated_time") or ""),
+        })
+    orders.sort(key=lambda o: o["create_time"], reverse=True)
+    return {"code": code, "orders": orders}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # 安静一点
         log.debug(fmt, *args)
@@ -494,6 +666,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, cached("option_plans", build_option_plans))
             elif parsed.path == "/paper-options":
                 self._send(200, paper_state())
+            elif parsed.path == "/account":
+                self._send(200, cached("account", fetch_account, ttl=ACCOUNT_TTL))
+            elif parsed.path == "/account/orders":
+                code = qs["code"][0]
+                self._send(
+                    200,
+                    cached(f"acct_orders:{code}", lambda: fetch_account_orders(code), ttl=ORDERS_TTL),
+                )
             else:
                 self._send(404, {"error": "not found"})
         except KeyError as e:

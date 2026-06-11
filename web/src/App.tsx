@@ -12,6 +12,7 @@ import TradeFeed from './components/TradeFeed'
 import OptionsPanel from './components/OptionsPanel'
 import { OptionPlansSection, OptionsPaperSection } from './components/OptionPlansPanel'
 import HoldingsGuide from './components/HoldingsGuide'
+import MoomooAccountPanel from './components/MoomooAccountPanel'
 import StrategiesPanel from './components/StrategiesPanel'
 import UniversePlanPanel from './components/UniversePlanPanel'
 import FactorLabPanel from './components/FactorLabPanel'
@@ -228,9 +229,11 @@ export default function App() {
         </section>
       </div>
 
-      {/* 持仓页：退出指引 + 股票模拟盘 + 期权模拟盘，隐藏而非卸载 */}
+      {/* 持仓页：moomoo 账户 + 退出指引 + 股票模拟盘 + 期权模拟盘，隐藏而非卸载 */}
       <div className={`flex flex-col gap-4 ${view === 'positions' ? '' : 'hidden'}`}>
-        {/* 所有持仓的动态退出参数总览，置顶全宽。 */}
+        {/* moomoo 模拟账户真实持仓（OpenD），账户视角置顶。 */}
+        <MoomooAccountPanel />
+        {/* 所有持仓的动态退出参数总览。 */}
         <HoldingsGuide />
         {/* Paper trading follows the champion slots, not the selected symbol. */}
         <PaperPanel />

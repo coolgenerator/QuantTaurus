@@ -583,6 +583,76 @@ export function fetchOptionsPaper(): Promise<OptionsPaperStatus> {
   return getJson('/opt-api/paper-options')
 }
 
+// ---------- moomoo simulate account (live data via OpenD) ----------
+
+export interface MoomooFunds {
+  total_assets: number | null
+  cash: number | null
+  market_val: number | null
+  power: number | null
+}
+
+/** Parsed option contract fields; null for plain stock positions. */
+export interface MoomooOptionInfo {
+  underlying: string
+  expiry: string
+  opt_type: 'C' | 'P'
+  strike: number
+}
+
+export interface MoomooPosition {
+  code: string
+  symbol: string
+  name: string
+  is_option: boolean
+  opt: MoomooOptionInfo | null
+  /** Signed quantity (negative = short). */
+  qty: number
+  can_sell_qty: number | null
+  avg_cost: number | null
+  last: number | null
+  prev_close: number | null
+  market_val: number
+  pl_val: number | null
+  /** P/L over cost basis, as a fraction (0.05 = +5%). */
+  pl_pct: number | null
+  /** Approximated locally — simulate env has no official today_pl_val. */
+  today_pl: number | null
+  /** |market_val| / Σ|market_val|, as a fraction. */
+  pct_of_positions: number
+}
+
+export interface MoomooAccount {
+  funds: MoomooFunds
+  positions: MoomooPosition[]
+  updated_ms: number
+}
+
+export interface MoomooOrder {
+  order_id: string
+  side: 'BUY' | 'SELL'
+  status: string
+  qty: number | null
+  dealt_qty: number
+  dealt_avg_price: number | null
+  price: number | null
+  create_time: string
+  updated_time: string
+}
+
+export interface MoomooOrdersResponse {
+  code: string
+  orders: MoomooOrder[]
+}
+
+export function fetchMoomooAccount(): Promise<MoomooAccount> {
+  return getJson('/opt-api/account')
+}
+
+export function fetchMoomooOrders(code: string): Promise<MoomooOrdersResponse> {
+  return getJson(`/opt-api/account/orders?code=${encodeURIComponent(code)}`)
+}
+
 // ---------- Factor Lab (genetic factor mining) ----------
 
 /** Mining run configuration; omit a field to use the backend default. */
