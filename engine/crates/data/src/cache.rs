@@ -15,10 +15,12 @@ pub struct KlineStore {
     last_refresh: std::sync::Mutex<std::collections::HashMap<(String, Interval), i64>>,
 }
 
-/// 尾部刷新冷却期（毫秒）：日线及以上 60s，盘中粒度 15s
-fn tail_cooldown_ms(interval: Interval) -> i64 {
+/// 尾部刷新冷却期（毫秒）：日线及以上 60-90s（按标的散列抖动错峰，
+/// 避免44个标的同时到期形成请求惊群），盘中粒度 15s
+fn tail_cooldown_ms(symbol: &str, interval: Interval) -> i64 {
     if interval.millis() >= 86_400_000 {
-        60_000
+        let jitter = symbol.bytes().map(|b| b as i64).sum::<i64>() % 30_000;
+        60_000 + jitter
     } else {
         15_000
     }
@@ -84,7 +86,7 @@ impl KlineStore {
                 .as_millis() as i64;
             let key = (symbol.to_string(), interval);
             let mut lr = self.last_refresh.lock().unwrap();
-            if now - lr.get(&key).copied().unwrap_or(0) < tail_cooldown_ms(interval) {
+            if now - lr.get(&key).copied().unwrap_or(0) < tail_cooldown_ms(symbol, interval) {
                 need_tail = false; // 冷却期内：直接用缓存
             } else {
                 lr.insert(key, now);

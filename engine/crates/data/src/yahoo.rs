@@ -33,7 +33,7 @@ async fn throttle() {
         tokio::sync::Mutex::new(std::time::Instant::now() - Duration::from_secs(1))
     });
     let mut last = gate.lock().await;
-    let min_gap = Duration::from_millis(250);
+    let min_gap = Duration::from_millis(400);
     let elapsed = last.elapsed();
     if elapsed < min_gap {
         tokio::time::sleep(min_gap - elapsed).await;
@@ -108,9 +108,12 @@ impl YahooClient {
         );
         throttle().await;
         let mut resp = self.http.get(&url).send().await.context("yahoo request")?;
-        // 429 限流：退避2秒重试一次
-        if resp.status().as_u16() == 429 {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+        // 429 限流：3s/8s 两次退避重试
+        for backoff in [3u64, 8] {
+            if resp.status().as_u16() != 429 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(backoff)).await;
             throttle().await;
             resp = self.http.get(&url).send().await.context("yahoo request")?;
         }
