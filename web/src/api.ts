@@ -942,7 +942,8 @@ export function fetchChampions(): Promise<ChampionRegistryMap> {
   return getJson('/api/champion')
 }
 
-export function fetchPaperStatus(): Promise<PaperStatus> {
+export function fetchPaperStatus(key?: string): Promise<PaperStatus> {
+  if (key) return getJson(`/api/paper?key=${encodeURIComponent(key)}`)
   return getJson('/api/paper')
 }
 

@@ -120,7 +120,34 @@ export default function PaperPanel() {
   }, [load])
 
   const sortedKeys = useMemo(() => Object.keys(sessions).sort(), [sessions])
-  const session = selectedKey ? sessions[selectedKey] ?? null : null
+  // 选中会话的全量数据（完整曲线+交易）：列表是轻量摘要，全量单独拉
+  const [detail, setDetail] = useState<PaperSession | null>(null)
+  useEffect(() => {
+    if (!selectedKey) {
+      setDetail(null)
+      return
+    }
+    let cancelled = false
+    const loadDetail = async () => {
+      try {
+        const s = await fetchPaperStatus(selectedKey)
+        if (!cancelled) setDetail(s.sessions?.[selectedKey] ?? null)
+      } catch {
+        /* 摘要仍可用，静默 */
+      }
+    }
+    void loadDetail()
+    const t = window.setInterval(loadDetail, 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [selectedKey])
+  const session = detail && selectedKey && detail.symbol === sessions[selectedKey]?.symbol
+    ? detail
+    : selectedKey
+      ? sessions[selectedKey] ?? null
+      : null
 
   // (Re)create the equity chart whenever the selected session changes
   // (tab switch or data reload) — rebuilt from that session's curve.
@@ -200,7 +227,16 @@ export default function PaperPanel() {
 
   const active = sortedKeys.length > 0
   const stats = selectedKey ? statsByKey[selectedKey] ?? null : null
-  const trades = selectedKey ? tradesByKey[selectedKey] ?? [] : []
+  const detailTrades = useMemo<TradeRow[]>(
+    () =>
+      (detail?.trades ?? [])
+        .slice()
+        .sort((a, b) => b.time - a.time)
+        .slice(0, MAX_TRADES)
+        .map((t, i) => ({ ...t, id: i })),
+    [detail],
+  )
+  const trades = detailTrades.length > 0 ? detailTrades : selectedKey ? tradesByKey[selectedKey] ?? [] : []
   const equity = stats?.equity ?? 1
   const pnl = equity - 1
   const equityCls = pnl >= 0 ? 'text-neon-green' : 'text-neon-red'

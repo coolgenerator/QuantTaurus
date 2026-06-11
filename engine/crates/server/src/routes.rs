@@ -326,9 +326,22 @@ pub async fn champion(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(champs)
 }
 
-pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+#[derive(Deserialize)]
+pub struct PaperQuery {
+    /// 指定槽位键时返回该会话全量（曲线+全部交易）；否则全部会话轻量摘要
+    key: Option<String>,
+}
+
+pub async fn paper(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<PaperQuery>,
+) -> impl IntoResponse {
     const ALLOC_USD: f64 = 10_000.0; // 每槽名义资金（与 moomoo 桥接 ALLOC_USD 同口径）
-    let sessions = state.paper.lock().unwrap().clone();
+    let mut sessions = state.paper.lock().unwrap().clone();
+    if let Some(key) = &q.key {
+        sessions.retain(|k, _| k == key);
+    }
+    let full = q.key.is_some();
     let augmented: serde_json::Map<String, serde_json::Value> = sessions
         .iter()
         .map(|(k, s)| {
@@ -363,6 +376,21 @@ pub async fn paper(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     "notional_usd".into(),
                     json!(s.position.abs() * ALLOC_USD * s.equity),
                 );
+            }
+            // 摘要模式：44会话全量曲线近1MB拖慢持仓页——列表只需末点与近5笔交易，
+            // 选中会话的完整曲线由前端带 ?key= 单独拉
+            if !full {
+                if let Some(obj) = v.as_object_mut() {
+                    if let Some(curve) = obj.get("curve").and_then(|c| c.as_array()) {
+                        let tail = curve.last().cloned().map(|p| vec![p]).unwrap_or_default();
+                        obj.insert("curve".into(), json!(tail));
+                    }
+                    if let Some(trades) = obj.get("trades").and_then(|t| t.as_array()) {
+                        let n = trades.len();
+                        let tail: Vec<_> = trades.iter().skip(n.saturating_sub(5)).cloned().collect();
+                        obj.insert("trades".into(), json!(tail));
+                    }
+                }
             }
             (k.clone(), v)
         })

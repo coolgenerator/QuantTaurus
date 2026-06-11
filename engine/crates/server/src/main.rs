@@ -44,6 +44,24 @@ async fn main() -> anyhow::Result<()> {
         "SOLUSDT".into(),
     ]);
 
+    // 统计缓存预热：重启清空内存缓存后，后台先算好 1d 规则统计（~10s），
+    // 避免技术分析页首开撞冷缓存
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            if let Ok(r) = ta_stats::compute(&st, "1d").await {
+                if let Ok(val) = serde_json::to_value(&r) {
+                    st.ta_stats_cache
+                        .lock()
+                        .unwrap()
+                        .insert("1d".into(), (state::now_ms(), val));
+                    tracing::info!("ta_stats 1d cache warmed");
+                }
+            }
+        });
+    }
+
     // 自动扫描调度器：每 QHH_AUTOSWEEP_HOURS 小时全宇宙进化扫描（默认 24，0=关闭）
     {
         let st = state.clone();
