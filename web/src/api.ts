@@ -326,6 +326,10 @@ export interface TradePlan {
   horizon_days: number
   /** Daily volatility (fraction, e.g. 0.0252 = 2.52%). */
   vol_daily: number
+  /** 盘中再决策试算目标仓位（未收盘bar以最新价作临时收盘）；非盘中为 null。 */
+  intraday_target: number | null
+  intraday_price: number | null
+  intraday_as_of: number | null
 }
 
 export function fetchTradePlans(): Promise<TradePlan[]> {

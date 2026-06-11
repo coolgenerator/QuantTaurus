@@ -56,6 +56,35 @@ function FlipLine({ plan, dir }: { plan: TradePlan; dir: Direction }) {
   )
 }
 
+/** 盘中再决策行：以最新价作临时收盘的正式试算，模拟盘每30分钟按此调仓。 */
+function IntradayLine({ plan }: { plan: TradePlan }) {
+  const t = plan.intraday_target ?? 0
+  const drift = Math.abs(t - plan.target_position)
+  const tone = t > 0.05 ? 'text-neon-green' : t < -0.05 ? 'text-neon-red' : 'text-slate-400'
+  const asOf =
+    plan.intraday_as_of !== null
+      ? new Date(plan.intraday_as_of).toLocaleTimeString('zh-CN', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : '—'
+  return (
+    <div
+      className="mt-2 rounded-lg border border-neon-purple/30 bg-neon-purple/5 px-2.5 py-1.5 font-mono text-[11px] text-slate-300"
+      title="盘中每30分钟用最新价作临时收盘正式重算信号；目标变化≥10%时模拟盘即时调仓"
+    >
+      盘中再决策 <span className="text-slate-500">{asOf}</span> · 现价{' '}
+      <span className="font-bold text-slate-200">{fmtNum(plan.intraday_price)}</span> → 目标{' '}
+      <span className={`font-bold ${tone}`}>{Math.round(t * 100)}%</span>
+      {drift >= 0.1 ? (
+        <span className="ml-1 font-bold text-amber-400">⚠ 与收盘计划不同</span>
+      ) : (
+        <span className="ml-1 text-slate-500">与收盘计划一致</span>
+      )}
+    </div>
+  )
+}
+
 /** Confidence color tiers: >=70 green / >=50 amber / <50 red. */
 function confidenceTone(confidence: number): { text: string; bar: string } {
   if (confidence >= 70)
@@ -193,6 +222,11 @@ function PlanCard({
         <span className="text-slate-700">·</span>
         <FlipLine plan={plan} dir={dir} />
       </div>
+
+      {/* 盘中再决策：每30分钟以最新价作临时收盘正式重算，模拟盘按此调仓 */}
+      {plan.intraday_target !== null && plan.intraday_target !== undefined && (
+        <IntradayLine plan={plan} />
+      )}
 
       {/* 下一决策倒计时 */}
       <div className="mt-2 font-mono text-xs text-slate-400">

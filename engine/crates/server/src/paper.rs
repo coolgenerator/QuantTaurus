@@ -25,6 +25,36 @@ fn stock_long_only() -> bool {
     std::env::var("QHH_STOCK_LONG_ONLY").map_or(true, |v| v != "0")
 }
 
+/// 粗略的美股盘中判断（UTC 周一~周五 13:30–20:00；不处理假日与夏令时1小时偏差）
+pub fn us_market_open() -> bool {
+    let secs = now_ms() / 1000;
+    let days = secs / 86_400;
+    // 1970-01-01 是周四：dow 0=Thu 1=Fri 2=Sat 3=Sun 4=Mon 5=Tue 6=Wed
+    let dow = days % 7;
+    if dow == 2 || dow == 3 {
+        return false;
+    }
+    let tod = secs % 86_400;
+    (13 * 3600 + 1800..20 * 3600).contains(&tod)
+}
+
+/// 盘中再决策周期（分钟）：盘中每 N 分钟用最新价作临时收盘正式重算信号并调仓。
+/// 股票仅美股盘中，加密全天；周期 ≤30 分钟的槽位跳过。QHH_INTRADAY_MINUTES=0 关闭。
+pub fn intraday_minutes() -> u64 {
+    std::env::var("QHH_INTRADAY_MINUTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30)
+}
+
+/// 盘中调仓死区：目标仓位变化小于该值不动作（防盘中噪声反复刷手续费）
+fn intraday_min_delta() -> f64 {
+    std::env::var("QHH_INTRADAY_MIN_DELTA")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.10)
+}
+
 /// 经典信号仓位调制开关。**默认关闭**：4年A/B回测显示共振调制在6冠军槽
 /// 无一致增益（SPY 1.60→1.52 / QQQ 0.53→0.39，boost/cut单腿也不行）——
 /// 经典信号共振不含冠军策略之外的增量信息。设 QHH_TA_MOD=1 可实验性开启。
@@ -91,6 +121,9 @@ pub struct PaperTrade {
     pub from_position: f64,
     pub to_position: f64,
     pub cost: f64,
+    /// true = 盘中再决策成交（非 bar 收盘的正式决策点）
+    #[serde(default)]
+    pub intraday: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,22 +208,40 @@ pub fn start_paper_engine(state: Arc<AppState>) {
     });
 
     // 任务2：周期bar收盘 → 重算信号调仓；同时跟踪冠军热更新
+    let st2 = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(30));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut n: u64 = 0;
         loop {
             tick.tick().await;
-            if let Err(e) = rebalance_tick(&state).await {
+            if let Err(e) = rebalance_tick(&st2).await {
                 tracing::warn!(error = %e, "paper rebalance tick failed");
             }
             // 每 5 分钟落盘一次会话（重启恢复净值）
             n += 1;
             if n % 10 == 0 {
-                state.save_paper();
+                st2.save_paper();
             }
         }
     });
+
+    // 任务3：盘中再决策——每 QHH_INTRADAY_MINUTES 分钟把当前未收盘 bar 以
+    // 最新价作临时收盘，正式重算信号并调仓（带死区）。收盘决策路径不受影响。
+    let minutes = intraday_minutes();
+    if minutes > 0 {
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(minutes * 60));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tick.tick().await; // 跳过启动立即触发的首个 tick
+            loop {
+                tick.tick().await;
+                if let Err(e) = intraday_tick(&state).await {
+                    tracing::warn!(error = %e, "intraday decision tick failed");
+                }
+            }
+        });
+    }
 }
 
 fn max_dd_limit() -> f64 {
@@ -240,20 +291,47 @@ fn check_kill_switch(state: &Arc<AppState>) -> bool {
     false
 }
 
+fn champion_snapshot(state: &Arc<AppState>) -> Vec<(String, String, String, StrategySpec)> {
+    let champs = state.champions.lock().unwrap();
+    champs
+        .iter()
+        .filter_map(|(key, rec)| {
+            rec.spec
+                .as_ref()
+                .map(|s| (key.clone(), rec.symbol.clone(), rec.interval.clone(), s.clone()))
+        })
+        .collect()
+}
+
+/// 目标仓位管线（收盘与盘中两条决策路径共用）：
+/// NaN清零 → clamp → 正股只多 → 经典信号调制 → 回撤熔断清零
+fn decide_target(
+    spec: &StrategySpec,
+    klines: &[qcore::Kline],
+    symbol: &str,
+    risk_halted: bool,
+) -> (f64, f64) {
+    let targets = spec.signals(klines);
+    let target = targets.last().copied().unwrap_or(0.0);
+    let mut target = if target.is_nan() { 0.0 } else { target.clamp(-1.0, 1.0) };
+    if !qdata::is_crypto(symbol) && stock_long_only() {
+        target = target.max(0.0);
+    }
+    let mut ta_mod = 1.0f64;
+    if ta_modulation_enabled() {
+        let factors = ta_modulation_factors(klines, &targets);
+        ta_mod = factors.last().copied().unwrap_or(1.0);
+        target = (target * ta_mod).clamp(-1.0, 1.0);
+    }
+    if risk_halted {
+        target = 0.0;
+    }
+    (target, ta_mod)
+}
+
 async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
     let halted = check_kill_switch(state);
-    // 注册表快照
-    let champions: Vec<(String, String, String, StrategySpec)> = {
-        let champs = state.champions.lock().unwrap();
-        champs
-            .iter()
-            .filter_map(|(key, rec)| {
-                rec.spec
-                    .as_ref()
-                    .map(|s| (key.clone(), rec.symbol.clone(), rec.interval.clone(), s.clone()))
-            })
-            .collect()
-    };
+    let champions = champion_snapshot(state);
 
     // 冠军被移除的会话清理
     {
@@ -266,6 +344,127 @@ async fn rebalance_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
         if let Err(e) = rebalance_one(state, &key, &symbol, &interval_s, &spec, halted).await {
             tracing::warn!(key, error = %e, "paper rebalance failed for session");
         }
+    }
+    Ok(())
+}
+
+/// 盘中再决策 tick：对每个槽位用最新价作临时收盘重算信号，目标变化超死区即调仓
+async fn intraday_tick(state: &Arc<AppState>) -> anyhow::Result<()> {
+    let halted = check_kill_switch(state);
+    let champions = champion_snapshot(state);
+    let n = champions.len();
+    for (key, symbol, interval_s, spec) in champions {
+        if let Err(e) = intraday_one(state, &key, &symbol, &interval_s, &spec, halted).await {
+            tracing::warn!(key, error = %e, "intraday decision failed for session");
+        }
+    }
+    tracing::debug!(slots = n, "intraday decision tick done");
+    Ok(())
+}
+
+async fn intraday_one(
+    state: &Arc<AppState>,
+    key: &str,
+    symbol: &str,
+    interval_s: &str,
+    spec: &StrategySpec,
+    risk_halted: bool,
+) -> anyhow::Result<()> {
+    let Some(interval) = Interval::parse(interval_s) else {
+        anyhow::bail!("bad champion interval: {interval_s}");
+    };
+    let step = interval.millis();
+    // 周期≤30分钟的槽位 bar 收盘本就频繁，盘中再决策无意义；股票仅美股盘中
+    if step <= 30 * 60_000 {
+        return Ok(());
+    }
+    if !qdata::is_crypto(symbol) && !us_market_open() {
+        return Ok(());
+    }
+    // 会话还没被收盘路径初始化时不做盘中决策
+    if !state.paper.lock().unwrap().contains_key(key) {
+        return Ok(());
+    }
+
+    let end = now_ms();
+    let mut klines = state
+        .store
+        .get(symbol, interval, end - HISTORY_BARS * step * 2, end)
+        .await?;
+    let partial = klines.iter().rev().find(|k| k.open_time + step > end).copied();
+    klines.retain(|k| k.open_time + step <= end);
+    anyhow::ensure!(klines.len() > 250, "not enough history for intraday decision");
+    // 当前bar尚无数据（数据源时差）→ 本轮跳过
+    let Some(mut pb) = partial else { return Ok(()) };
+
+    // 临时收盘价：优先会话实时 mark 价（报价轮询/实时流每15s更新），否则用未收盘bar收盘价
+    let live = {
+        let guard = state.paper.lock().unwrap();
+        guard.get(key).map(|s| s.last_price).filter(|p| *p > 0.0)
+    };
+    if let Some(lp) = live {
+        pb.close = lp;
+        pb.high = pb.high.max(lp);
+        pb.low = pb.low.min(lp);
+    }
+    klines.push(pb);
+    let (target, ta_mod) = decide_target(spec, &klines, symbol, risk_halted);
+    let price = pb.close;
+
+    let mut events: Vec<WsMessage> = Vec::new();
+    {
+        let mut guard = state.paper.lock().unwrap();
+        let Some(sess) = guard.get_mut(key) else { return Ok(()) };
+        let turnover = (target - sess.position).abs();
+        if turnover < intraday_min_delta() {
+            return Ok(());
+        }
+        // 先按决策价 mark 再成交（不更新 last_bar_open——收盘决策点不受影响）
+        if sess.last_price > 0.0 {
+            sess.equity *= 1.0 + sess.position * (price / sess.last_price - 1.0);
+        }
+        sess.last_price = price;
+        let cost = turnover * cost_per_unit_turnover(&sess.symbol);
+        sess.equity *= 1.0 - cost;
+        let trade = PaperTrade {
+            time: end,
+            price,
+            from_position: sess.position,
+            to_position: target,
+            cost,
+            intraday: true,
+        };
+        sess.position = target;
+        sess.ta_mod = ta_mod;
+        let pt = EquityPoint {
+            time: end,
+            equity: sess.equity,
+            position: sess.position,
+            price,
+        };
+        sess.curve.push_back(pt);
+        while sess.curve.len() > MAX_CURVE_POINTS {
+            sess.curve.pop_front();
+        }
+        events.push(WsMessage::Paper {
+            key: key.to_string(),
+            symbol: sess.symbol.clone(),
+            interval: sess.interval.clone(),
+            time: pt.time,
+            equity: pt.equity,
+            position: pt.position,
+            price: pt.price,
+        });
+        events.push(WsMessage::PaperTrade {
+            key: key.to_string(),
+            symbol: sess.symbol.clone(),
+            trade: trade.clone(),
+        });
+        sess.trades.push(trade);
+        tracing::info!(key, target, price, "盘中再决策调仓");
+    }
+    for ev in events {
+        let _ = state.ws_tx.send(ev);
     }
     Ok(())
 }
@@ -304,24 +503,8 @@ async fn rebalance_one(
     anyhow::ensure!(klines.len() > 250, "not enough history for paper trading");
     let last = *klines.last().unwrap();
 
-    let targets = spec.signals(&klines);
-    let target = targets.last().copied().unwrap_or(0.0);
-    let mut target = if target.is_nan() { 0.0 } else { target.clamp(-1.0, 1.0) };
-    // 正股默认只多不空（QHH_STOCK_LONG_ONLY=0 可关闭）；加密不受限
-    if !qdata::is_crypto(symbol) && stock_long_only() {
-        target = target.max(0.0);
-    }
-    // 经典信号共振调制（回测验证过的轻量风险覆盖；QHH_TA_MOD=0 关闭）
-    let mut ta_mod = 1.0f64;
-    if ta_modulation_enabled() {
-        let factors = ta_modulation_factors(&klines, &targets);
-        ta_mod = factors.last().copied().unwrap_or(1.0);
-        target = (target * ta_mod).clamp(-1.0, 1.0);
-    }
-    // 组合回撤熔断：清零全部目标仓位
-    if risk_halted {
-        target = 0.0;
-    }
+    // 目标仓位管线（NaN清零→只多约束→调制→熔断清零）与盘中决策路径共用
+    let (target, ta_mod) = decide_target(spec, &klines, symbol, risk_halted);
 
     let mut events: Vec<WsMessage> = Vec::new();
     {
@@ -383,6 +566,7 @@ async fn rebalance_one(
                     from_position: sess.position,
                     to_position: target,
                     cost,
+                    intraday: false,
                 };
                 sess.position = target;
                 events.push(WsMessage::PaperTrade {

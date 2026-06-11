@@ -241,18 +241,7 @@ fn spawn_auto_retrain(state: Arc<AppState>) {
     });
 }
 
-/// 粗略的美股盘中判断（UTC 周一~周五 13:30–20:00；不处理假日与夏令时1小时偏差）
-fn us_market_open() -> bool {
-    let secs = state::now_ms() / 1000;
-    let days = secs / 86_400;
-    // 1970-01-01 是周四：dow 0=Thu 1=Fri 2=Sat 3=Sun 4=Mon 5=Tue 6=Wed
-    let dow = days % 7;
-    if dow == 2 || dow == 3 {
-        return false;
-    }
-    let tod = secs % 86_400;
-    (13 * 3600 + 1800..20 * 3600).contains(&tod)
-}
+use paper::us_market_open;
 
 fn spawn_stock_quote_poller(state: Arc<AppState>) {
     tokio::spawn(async move {

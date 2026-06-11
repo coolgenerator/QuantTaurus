@@ -43,6 +43,11 @@ pub struct TradePlan {
     pub horizon_days: f64,
     /// 20日已实现日波动
     pub vol_daily: f64,
+    /// 盘中再决策试算：未收盘bar以最新价作临时收盘的目标仓位。
+    /// 模拟盘每 QHH_INTRADAY_MINUTES 分钟按此正式调仓；非盘中/未启用为 None
+    pub intraday_target: Option<f64>,
+    pub intraday_price: Option<f64>,
+    pub intraday_as_of: Option<i64>,
 }
 
 /// 置信度：留出窗 Sharpe → 0-100。Sharpe 0 → 50 分；每 +1 Sharpe +22 分
@@ -342,6 +347,7 @@ pub async fn build_plans(state: &Arc<AppState>) -> anyhow::Result<Vec<TradePlan>
                 continue;
             }
         };
+        let partial_bar = klines.iter().rev().find(|k| k.open_time + step > end).copied();
         klines.retain(|k| k.open_time + step <= end);
         if klines.len() < 250 {
             continue;
@@ -371,11 +377,39 @@ pub async fn build_plans(state: &Arc<AppState>) -> anyhow::Result<Vec<TradePlan>
         } else {
             (None, None)
         };
+        // 盘中再决策试算：未收盘bar以最新价（优先模拟盘实时 mark 价）作临时收盘
+        let intraday_cfg = crate::paper::intraday_minutes();
+        let intraday_live = intraday_cfg > 0
+            && step > 30 * 60_000
+            && (qdata::is_crypto(&symbol) || crate::paper::us_market_open());
+        let (intraday_target, intraday_price, intraday_as_of) = match (intraday_live, partial_bar)
+        {
+            (true, Some(mut pb)) => {
+                let live = {
+                    let guard = state.paper.lock().unwrap();
+                    guard.get(&key).map(|s| s.last_price).filter(|p| *p > 0.0)
+                };
+                if let Some(lp) = live {
+                    pb.close = lp;
+                    pb.high = pb.high.max(lp);
+                    pb.low = pb.low.min(lp);
+                }
+                let mut series = klines.clone();
+                series.push(pb);
+                let t = spec.signals(&series).last().copied().unwrap_or(0.0);
+                let t = if t.is_nan() { 0.0 } else { t.clamp(-1.0, 1.0) };
+                (Some(t), Some(pb.close), Some(end))
+            }
+            _ => (None, None, None),
+        };
         let interval_label = match interval {
-            Interval::D1 => "日线 · 每日收盘决策一次，盘中不动作",
-            Interval::H4 => "4小时线 · 每4小时决策一次",
-            Interval::H1 => "1小时线 · 每小时决策一次",
-            _ => "分钟线",
+            Interval::D1 if intraday_cfg > 0 => {
+                format!("日线 · 每日收盘正式决策 + 盘中每{intraday_cfg}分钟再决策")
+            }
+            Interval::D1 => "日线 · 每日收盘决策一次，盘中不动作".to_string(),
+            Interval::H4 => "4小时线 · 每4小时决策一次".to_string(),
+            Interval::H1 => "1小时线 · 每小时决策一次".to_string(),
+            _ => "分钟线".to_string(),
         };
         plans.push(TradePlan {
             key,
@@ -386,7 +420,10 @@ pub async fn build_plans(state: &Arc<AppState>) -> anyhow::Result<Vec<TradePlan>
             flip_price: flip,
             next_decision_ms: next_decision(&symbol, interval, last.open_time),
             holdout_sharpe: holdout,
-            decision_interval_label: interval_label.to_string(),
+            decision_interval_label: interval_label,
+            intraday_target,
+            intraday_price,
+            intraday_as_of,
             confidence,
             confidence_label,
             rationale: rationale(&spec, &klines, target),
