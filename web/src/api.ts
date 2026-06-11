@@ -826,16 +826,21 @@ export interface UniversePlanRequest {
  * so read the body text for a usable error message instead of statusText.
  */
 export async function fetchUniversePlan(body: UniversePlanRequest = {}): Promise<UniversePlan> {
-  const res = await fetch('/api/universe_plan', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  // 只读计算型 POST，按 url+body 去重（通用 postJson 含有副作用的调用，不能去重）
+  const payload = JSON.stringify(body)
+  return dedupJson(`POST /api/universe_plan|${payload}`, async () => {
+    const res = await fetch('/api/universe_plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      const text = (await res.text()).trim()
+      throw new Error(text || `POST /api/universe_plan failed: ${res.status} ${res.statusText}`)
+    }
+    return (await res.json()) as UniversePlan
   })
-  if (!res.ok) {
-    const text = (await res.text()).trim()
-    throw new Error(text || `POST /api/universe_plan failed: ${res.status} ${res.statusText}`)
-  }
-  return res.json() as Promise<UniversePlan>
 }
 
 // ---------- WS message types ----------
@@ -887,10 +892,38 @@ export type WsMessage = WsKlineMsg | WsTradeMsg | WsEvolveDoneMsg | WsPaperMsg |
 
 // ---------- Fetch helpers ----------
 
+// 在飞去重 + 短 TTL 复用：StrictMode 双挂载与多个面板会在同一时刻拉同一接口，
+// 相同 key 的并发请求合并为一个网络请求，3 秒内的重复请求直接复用上次结果。
+// 否则慢接口的重复请求会占满浏览器每域 6 条连接，把所有板块一起拖卡。
+const DEDUP_TTL_MS = 3_000
+const REQUEST_TIMEOUT_MS = 30_000
+const inflightReqs = new Map<string, Promise<unknown>>()
+const recentResults = new Map<string, { ts: number; data: unknown }>()
+
+function dedupJson<T>(key: string, doFetch: () => Promise<T>): Promise<T> {
+  const hit = recentResults.get(key)
+  if (hit && Date.now() - hit.ts < DEDUP_TTL_MS) return Promise.resolve(hit.data as T)
+  const inflight = inflightReqs.get(key)
+  if (inflight) return inflight as Promise<T>
+  const p = doFetch()
+    .then((data) => {
+      if (recentResults.size > 200) recentResults.clear()
+      recentResults.set(key, { ts: Date.now(), data })
+      return data
+    })
+    .finally(() => {
+      inflightReqs.delete(key)
+    })
+  inflightReqs.set(key, p)
+  return p
+}
+
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}`)
-  return res.json() as Promise<T>
+  return dedupJson(url, async () => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+    if (!res.ok) throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}`)
+    return (await res.json()) as T
+  })
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {

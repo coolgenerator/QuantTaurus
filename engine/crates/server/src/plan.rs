@@ -9,6 +9,7 @@ use crate::state::{now_ms, AppState};
 use qcore::{Interval, Kline};
 use qstrategy::StrategySpec;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize)]
@@ -269,6 +270,46 @@ fn next_decision(symbol: &str, interval: Interval, last_open: i64) -> i64 {
     }
 }
 
+/// 计划缓存新鲜窗口。计划只在 bar 收盘后变化（最快 1h 线），60s 足够实时。
+const PLANS_FRESH_MS: i64 = 60_000;
+
+/// 交易计划 SWR 读取：新鲜→直接回；过期→立即回旧值并后台刷新；
+/// 冷启动→串行算一次。build_plans 冷路径要把全部冠军标的的 K 线尾部
+/// 刷新依次过 Yahoo 400ms 限频闸门（可达 30s），不能让 HTTP 请求扛。
+pub async fn cached_plans(state: &Arc<AppState>) -> anyhow::Result<Arc<Vec<TradePlan>>> {
+    let now = now_ms();
+    let stale = {
+        let g = state.plans_cache.lock().unwrap();
+        match g.as_ref() {
+            Some((ts, v)) if now - ts < PLANS_FRESH_MS => return Ok(v.clone()),
+            Some((_, v)) => Some(v.clone()),
+            None => None,
+        }
+    };
+    if let Some(v) = stale {
+        if !state.plans_refreshing.swap(true, Ordering::SeqCst) {
+            let st = state.clone();
+            tokio::spawn(async move {
+                let _g = st.plans_compute.lock().await;
+                match build_plans(&st).await {
+                    Ok(p) => *st.plans_cache.lock().unwrap() = Some((now_ms(), Arc::new(p))),
+                    Err(e) => tracing::warn!(error = %e, "plans cache refresh failed"),
+                }
+                st.plans_refreshing.store(false, Ordering::SeqCst);
+            });
+        }
+        return Ok(v);
+    }
+    let _g = state.plans_compute.lock().await;
+    // 等锁期间可能已被并发的冷启动调用算好
+    if let Some((_, v)) = state.plans_cache.lock().unwrap().as_ref() {
+        return Ok(v.clone());
+    }
+    let p = Arc::new(build_plans(state).await?);
+    *state.plans_cache.lock().unwrap() = Some((now_ms(), p.clone()));
+    Ok(p)
+}
+
 pub async fn build_plans(state: &Arc<AppState>) -> anyhow::Result<Vec<TradePlan>> {
     let champions: Vec<(String, String, String, StrategySpec, Option<f64>)> = {
         let champs = state.champions.lock().unwrap();
@@ -411,7 +452,7 @@ pub struct PortfolioPlan {
 /// 组合风控：等权资金分配 → 总杠杆上限 + 组合目标波动率双重约束统一缩放。
 /// 可用 QHH_GROSS_CAP（默认 1.0 = 不加杠杆）/ QHH_VOL_TARGET（默认 0.15 年化）调节。
 pub async fn build_portfolio(state: &Arc<AppState>) -> anyhow::Result<PortfolioPlan> {
-    let plans = build_plans(state).await?;
+    let plans = cached_plans(state).await?;
     let n = plans.len().max(1) as f64;
     let gross_cap = env_f64("QHH_GROSS_CAP", 1.0);
     let vol_target_annual = env_f64("QHH_VOL_TARGET", 0.15);

@@ -50,14 +50,59 @@ async fn main() -> anyhow::Result<()> {
         let st = state.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            if let Ok(r) = ta_stats::compute(&st, "1d").await {
-                if let Ok(val) = serde_json::to_value(&r) {
-                    st.ta_stats_cache
-                        .lock()
-                        .unwrap()
-                        .insert("1d".into(), (state::now_ms(), val));
-                    tracing::info!("ta_stats 1d cache warmed");
+            // 1d 用户最常用先预热；1h 冷算 ~47s 也提前付掉
+            for interval in ["1d", "1h"] {
+                if let Ok(r) = ta_stats::compute(&st, interval).await {
+                    if let Ok(val) = serde_json::to_value(&r) {
+                        st.ta_stats_cache
+                            .lock()
+                            .unwrap()
+                            .insert(interval.into(), (state::now_ms(), val));
+                        tracing::info!(interval, "ta_stats cache warmed");
+                    }
                 }
+            }
+        });
+    }
+
+    // 交易计划预热：冷算要把全部冠军标的尾刷依次过 Yahoo 限频闸门（可达30s），
+    // 启动时先付掉这笔钱，前端首开即中 SWR 缓存
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            match plan::cached_plans(&st).await {
+                Ok(p) => tracing::info!(slots = p.len(), "trade plans cache warmed"),
+                Err(e) => tracing::warn!(error = %e, "trade plans warmup failed"),
+            }
+        });
+    }
+
+    // 因子面板重接口预热（factor_forecast / universe_plan 冷算 8-12s）
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            routes::warm_factor_caches(st).await;
+        });
+    }
+
+    // 板块报告预热（冷算 ~20s，同样不让首个访问者扛）
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            if st.sector_cache.lock().unwrap().is_some() {
+                return;
+            }
+            match sectors::build_report(&st).await {
+                Ok(report) => {
+                    if let Ok(val) = serde_json::to_value(&report) {
+                        *st.sector_cache.lock().unwrap() = Some((state::now_ms(), val));
+                        tracing::info!("sector report cache warmed");
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "sector report warmup failed"),
             }
         });
     }
@@ -212,7 +257,9 @@ fn us_market_open() -> bool {
 fn spawn_stock_quote_poller(state: Arc<AppState>) {
     tokio::spawn(async move {
         let yahoo = qdata::YahooClient::new();
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
+        // 60s：日线策略的盘中标记不需要更细粒度；41标的×400ms闸门≈17s，
+        // 15s周期会让Yahoo配额永久饱和（曾致盘中持续限流）
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;

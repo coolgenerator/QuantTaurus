@@ -6,9 +6,10 @@ use qdata::KlineStore;
 use qevolve::EvolveReport;
 use qstrategy::StrategySpec;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 /// 推送给前端的 WS 消息
@@ -85,6 +86,17 @@ pub struct AppState {
     pub paper: Mutex<HashMap<String, crate::paper::PaperSession>>,
     /// 板块报告缓存：(生成时间ms, 序列化结果)
     pub sector_cache: Mutex<Option<(i64, serde_json::Value)>>,
+    /// 板块报告后台刷新进行中标记（防重复 spawn）
+    pub sectors_refreshing: AtomicBool,
+    /// 交易计划 SWR 缓存：过期回旧值+后台刷新，HTTP 请求不再扛 Yahoo 串行尾刷
+    pub plans_cache: Mutex<Option<(i64, Arc<Vec<crate::plan::TradePlan>>)>>,
+    /// 计划重算互斥：冷启动并发去重 + 后台刷新串行化
+    pub plans_compute: tokio::sync::Mutex<()>,
+    pub plans_refreshing: AtomicBool,
+    /// 重 JSON 接口（universe_plan / factor_forecast）SWR 缓存：key → (生成时间ms, 值)
+    pub json_swr_cache: Mutex<HashMap<String, (i64, serde_json::Value)>>,
+    /// 上述缓存的在飞刷新键集合
+    pub json_swr_refreshing: Mutex<HashSet<String>>,
     /// 技术规则历史统计缓存：interval → (生成时间ms, 序列化结果)
     pub ta_stats_cache: Mutex<HashMap<String, (i64, serde_json::Value)>>,
     pub paper_path: PathBuf,
@@ -130,6 +142,12 @@ impl AppState {
             champion_path,
             paper: Mutex::new(paper),
             sector_cache: Mutex::new(None),
+            sectors_refreshing: AtomicBool::new(false),
+            plans_cache: Mutex::new(None),
+            plans_compute: tokio::sync::Mutex::new(()),
+            plans_refreshing: AtomicBool::new(false),
+            json_swr_cache: Mutex::new(HashMap::new()),
+            json_swr_refreshing: Mutex::new(HashSet::new()),
             ta_stats_cache: Mutex::new(HashMap::new()),
             sweep_status: Mutex::new(SweepStatus::Idle),
             paper_path,

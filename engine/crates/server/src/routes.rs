@@ -27,6 +27,50 @@ pub async fn health() -> impl IntoResponse {
     Json(json!({"ok": true, "ts": now_ms()}))
 }
 
+/// 重 JSON 接口的 SWR 缓存新鲜窗口
+const SWR_FRESH_MS: i64 = 120_000;
+
+type BoxedValueFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<serde_json::Value>> + Send>>;
+
+/// 重接口通用 SWR：新鲜直接回；过期回旧值并后台重算（同 key 只一个在飞）；
+/// 无缓存时内联算。compute 恰好被调用一次（内联或后台）。
+async fn swr_json(
+    state: &Arc<AppState>,
+    key: String,
+    fresh_ms: i64,
+    compute: impl FnOnce(Arc<AppState>) -> BoxedValueFuture + Send + 'static,
+) -> AppResult<serde_json::Value> {
+    let now = now_ms();
+    let stale = {
+        let cache = state.json_swr_cache.lock().unwrap();
+        match cache.get(&key) {
+            Some((ts, val)) if now - ts < fresh_ms => return Ok(val.clone()),
+            Some((_, val)) => Some(val.clone()),
+            None => None,
+        }
+    };
+    if let Some(val) = stale {
+        let spawned = state.json_swr_refreshing.lock().unwrap().insert(key.clone());
+        if spawned {
+            let st = state.clone();
+            tokio::spawn(async move {
+                match compute(st.clone()).await {
+                    Ok(v) => {
+                        st.json_swr_cache.lock().unwrap().insert(key.clone(), (now_ms(), v));
+                    }
+                    Err(e) => tracing::warn!(key, error = %e, "swr refresh failed"),
+                }
+                st.json_swr_refreshing.lock().unwrap().remove(&key);
+            });
+        }
+        return Ok(val);
+    }
+    let v = compute(state.clone()).await.map_err(internal)?;
+    state.json_swr_cache.lock().unwrap().insert(key, (now_ms(), v.clone()));
+    Ok(v)
+}
+
 fn env_f64(key: &str, default: f64) -> f64 {
     std::env::var(key)
         .ok()
@@ -415,8 +459,8 @@ pub async fn search(Query(q): Query<SearchQuery>) -> AppResult<impl IntoResponse
 }
 
 pub async fn plan(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
-    let plans = crate::plan::build_plans(&state).await.map_err(internal)?;
-    Ok(Json(plans))
+    let plans = crate::plan::cached_plans(&state).await.map_err(internal)?;
+    Ok(Json(serde_json::to_value(&*plans).map_err(internal)?))
 }
 
 pub async fn portfolio(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
@@ -550,23 +594,39 @@ fn default_true() -> bool {
     true
 }
 
-/// 全池 Top-K 计划：52股票池因子排序 → 选股 → 分数/波动率加权配仓
+/// 全池 Top-K 计划：52股票池因子排序 → 选股 → 分数/波动率加权配仓。
+/// 实际计算（600天面板 + 全池打分）秒级 CPU+IO，走 SWR 缓存。
 pub async fn universe_plan(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UniversePlanReq>,
 ) -> AppResult<impl IntoResponse> {
-    let lib = crate::mine_job::load_library(&state);
-    if lib.is_empty() {
+    if crate::mine_job::load_library(&state).is_empty() {
         return Err(bad("因子库为空，先在因子Lab挖掘"));
     }
-    let panel = crate::mine_job::build_panel(&state, 600).await.map_err(internal)?;
+    let key = format!(
+        "universe_plan|{}|{}|{}",
+        req.k, req.capital_usd, req.include_shorts
+    );
+    let val = swr_json(&state, key, SWR_FRESH_MS, move |st| {
+        Box::pin(async move { universe_plan_value(st, req).await })
+    })
+    .await?;
+    Ok(Json(val))
+}
+
+async fn universe_plan_value(
+    state: Arc<AppState>,
+    req: UniversePlanReq,
+) -> anyhow::Result<serde_json::Value> {
+    let lib = crate::mine_job::load_library(&state);
+    anyhow::ensure!(!lib.is_empty(), "因子库为空，先在因子Lab挖掘");
+    let panel = crate::mine_job::build_panel(&state, 600).await?;
     let exprs: Vec<qmine::Expr> = lib.iter().map(|f| f.ast.clone()).collect();
     let (z, panel) = tokio::task::spawn_blocking(move || {
         let z = qmine::combined_z(&panel, &exprs);
         (z, panel)
     })
-    .await
-    .map_err(internal)?;
+    .await?;
 
     // 最近覆盖足够的横截面日期
     let mut t = panel.n_dates() - 1;
@@ -657,7 +717,7 @@ pub async fn universe_plan(
     };
 
     let avg_ic = lib.iter().map(|f| f.holdout_ic).sum::<f64>() / lib.len() as f64;
-    Ok(Json(json!({
+    Ok(json!({
         "as_of": panel.dates[t],
         "horizon_days": lib.first().map_or(5, |f| f.horizon),
         "capital_usd": req.capital_usd,
@@ -669,23 +729,66 @@ pub async fn universe_plan(
             "avg_holdout_ic": avg_ic,
             "note": "横截面相对强弱信号（留出IC≈该值）；预测的是组内相对表现，非绝对涨跌"
         }
-    })))
+    }))
 }
 
-/// F5: 用因子库当前值预测未来 horizon 日的横截面相对强弱
+/// F5: 用因子库当前值预测未来 horizon 日的横截面相对强弱（计算同 universe_plan 量级，走 SWR）
 pub async fn factor_forecast(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
-    let lib = crate::mine_job::load_library(&state);
-    if lib.is_empty() {
+    if crate::mine_job::load_library(&state).is_empty() {
         return Err(bad("因子库为空，先 POST /api/mine 挖掘"));
     }
-    let panel = crate::mine_job::build_panel(&state, 600).await.map_err(internal)?;
+    let val = swr_json(&state, "factor_forecast".into(), SWR_FRESH_MS, move |st| {
+        Box::pin(async move { factor_forecast_value(st).await })
+    })
+    .await?;
+    Ok(Json(val))
+}
+
+/// 启动预热：因子面板两个重接口（600天面板+全池打分，冷算 8-12s）各算一次入 SWR 缓存。
+/// universe_plan 用与前端默认请求一致的参数，保证 key 命中。
+pub async fn warm_factor_caches(state: Arc<AppState>) {
+    if crate::mine_job::load_library(&state).is_empty() {
+        return;
+    }
+    match factor_forecast_value(state.clone()).await {
+        Ok(v) => {
+            state
+                .json_swr_cache
+                .lock()
+                .unwrap()
+                .insert("factor_forecast".into(), (now_ms(), v));
+            tracing::info!("factor_forecast cache warmed");
+        }
+        Err(e) => tracing::warn!(error = %e, "factor_forecast warmup failed"),
+    }
+    let req = UniversePlanReq {
+        k: default_topk(),
+        capital_usd: default_plan_capital(),
+        include_shorts: true,
+    };
+    let key = format!(
+        "universe_plan|{}|{}|{}",
+        req.k, req.capital_usd, req.include_shorts
+    );
+    match universe_plan_value(state.clone(), req).await {
+        Ok(v) => {
+            state.json_swr_cache.lock().unwrap().insert(key, (now_ms(), v));
+            tracing::info!("universe_plan cache warmed");
+        }
+        Err(e) => tracing::warn!(error = %e, "universe_plan warmup failed"),
+    }
+}
+
+async fn factor_forecast_value(state: Arc<AppState>) -> anyhow::Result<serde_json::Value> {
+    let lib = crate::mine_job::load_library(&state);
+    anyhow::ensure!(!lib.is_empty(), "因子库为空，先 POST /api/mine 挖掘");
+    let panel = crate::mine_job::build_panel(&state, 600).await?;
     let exprs: Vec<qmine::Expr> = lib.iter().map(|f| f.ast.clone()).collect();
     let z = tokio::task::spawn_blocking({
         let panel = panel.clone();
         move || qmine::combined_z(&panel, &exprs)
     })
-    .await
-    .map_err(internal)?;
+    .await?;
     // 最新日期可能只有部分标的有bar（盘前/数据时差），向前找覆盖足够的横截面
     let mut t = panel.n_dates() - 1;
     let count_at = |t: usize| (0..panel.n_symbols()).filter(|s| z[*s][t].is_finite()).count();
@@ -708,7 +811,7 @@ pub async fn factor_forecast(State(state): State<Arc<AppState>>) -> AppResult<im
     scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let avg_ic = lib.iter().map(|f| f.holdout_ic).sum::<f64>() / lib.len() as f64;
     let horizon = lib.first().map_or(5, |f| f.horizon);
-    Ok(Json(json!({
+    Ok(json!({
         "as_of": panel.dates[t],
         "horizon_days": horizon,
         "rankings": scores.iter().map(|(s, v)| json!({"symbol": s, "score": v})).collect::<Vec<_>>(),
@@ -721,7 +824,7 @@ pub async fn factor_forecast(State(state): State<Arc<AppState>>) -> AppResult<im
                 avg_ic
             ),
         },
-    })))
+    }))
 }
 
 #[derive(Deserialize)]
@@ -784,14 +887,38 @@ pub async fn options_backtest(
 }
 
 pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
-    // 10分钟内存缓存：板块报告要打几十个 Yahoo 请求
-    {
+    // SWR：新鲜直接回；过期回旧值并后台重算（报告要打几十个 Yahoo 请求，
+    // 冷路径 20s+，不能让 HTTP 请求扛）；仅首次冷启动内联算
+    let stale = {
         let cache = state.sector_cache.lock().unwrap();
-        if let Some((ts, val)) = cache.as_ref() {
-            if now_ms() - ts < crate::sectors::CACHE_TTL_MS {
-                return Ok(Json(val.clone()));
+        match cache.as_ref() {
+            Some((ts, val)) if now_ms() - ts < crate::sectors::CACHE_TTL_MS => {
+                return Ok(Json(val.clone()))
             }
+            Some((_, val)) => Some(val.clone()),
+            None => None,
         }
+    };
+    if let Some(val) = stale {
+        if !state
+            .sectors_refreshing
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let st = state.clone();
+            tokio::spawn(async move {
+                match crate::sectors::build_report(&st).await {
+                    Ok(report) => {
+                        if let Ok(v) = serde_json::to_value(&report) {
+                            *st.sector_cache.lock().unwrap() = Some((now_ms(), v));
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "sector report refresh failed"),
+                }
+                st.sectors_refreshing
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            });
+        }
+        return Ok(Json(val));
     }
     let report = crate::sectors::build_report(&state).await.map_err(internal)?;
     let val = serde_json::to_value(&report).map_err(internal)?;
@@ -819,26 +946,49 @@ pub async fn ta_stats(
         Some(sym) => format!("{}|{}", q.interval, sym.to_uppercase()),
         None => q.interval.clone(),
     };
-    {
+    // SWR：TTL 过期回旧值并后台重算（全宇宙 1h 统计冷算可达 ~47s）；仅首次内联算
+    let stale = {
         let cache = state.ta_stats_cache.lock().unwrap();
-        if let Some((ts, val)) = cache.get(&cache_key) {
-            if now_ms() - ts < crate::ta_stats::CACHE_TTL_MS {
-                return Ok(Json(val.clone()));
+        match cache.get(&cache_key) {
+            Some((ts, val)) if now_ms() - ts < crate::ta_stats::CACHE_TTL_MS => {
+                return Ok(Json(val.clone()))
             }
-        }
-    }
-    let val = match &q.symbol {
-        Some(sym) => {
-            let r = crate::ta_stats::compute_symbol(&state, &q.interval, &sym.to_uppercase())
-                .await
-                .map_err(bad)?;
-            serde_json::to_value(&r).map_err(internal)?
-        }
-        None => {
-            let r = crate::ta_stats::compute(&state, &q.interval).await.map_err(bad)?;
-            serde_json::to_value(&r).map_err(internal)?
+            Some((_, val)) => Some(val.clone()),
+            None => None,
         }
     };
+    let compute = |st: Arc<AppState>, interval: String, symbol: Option<String>| async move {
+        let val = match symbol {
+            Some(sym) => {
+                let r = crate::ta_stats::compute_symbol(&st, &interval, &sym).await?;
+                serde_json::to_value(&r)?
+            }
+            None => {
+                let r = crate::ta_stats::compute(&st, &interval).await?;
+                serde_json::to_value(&r)?
+            }
+        };
+        anyhow::Ok(val)
+    };
+    let symbol = q.symbol.as_ref().map(|s| s.to_uppercase());
+    if let Some(val) = stale {
+        let spawned = state.json_swr_refreshing.lock().unwrap().insert(cache_key.clone());
+        if spawned {
+            let st = state.clone();
+            let interval = q.interval.clone();
+            tokio::spawn(async move {
+                match compute(st.clone(), interval, symbol).await {
+                    Ok(v) => {
+                        st.ta_stats_cache.lock().unwrap().insert(cache_key.clone(), (now_ms(), v));
+                    }
+                    Err(e) => tracing::warn!(cache_key, error = %e, "ta_stats refresh failed"),
+                }
+                st.json_swr_refreshing.lock().unwrap().remove(&cache_key);
+            });
+        }
+        return Ok(Json(val));
+    }
+    let val = compute(state.clone(), q.interval.clone(), symbol).await.map_err(bad)?;
     state
         .ta_stats_cache
         .lock()

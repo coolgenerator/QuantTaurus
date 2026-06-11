@@ -98,26 +98,35 @@ def _yield_to_interactive():
         time.sleep(0.3)
 # OpenD 期权接口限频：官方 10 次/30 秒，留余量按 8 次执行
 _od_calls: list[float] = []
+_od_lock = threading.Lock()  # 保护 _od_calls（throttle 不再在 _quote_lock 内调用）
 OD_MAX_PER_30S = 8
+# 后台给交互让路的时间上限：交互计数可能因前端 abort 泄漏，无上限会饿死后台
+OD_YIELD_DEADLINE_S = 120.0
 
 
 def _od_throttle():
-    # 后台线程（计划预热）配额降级：最多5/30s，且交互请求等待期间完全让路
+    """等待 OpenD 期权接口配额。
+
+    必须在拿 _quote_lock **之前**调用：曾经在持锁状态下等配额/让路，
+    后台线程拿着锁睡觉，交互请求（持仓页/期权页）全部排队甚至互相等死。
+    """
     background = threading.current_thread().name == "options-plans"
+    yield_deadline = time.time() + OD_YIELD_DEADLINE_S
     while True:
-        if background:
+        if background and time.time() < yield_deadline:
             with _interactive_lock:
                 busy = _interactive > 0
             if busy:
                 time.sleep(0.3)
                 continue
-        now = time.time()
-        while _od_calls and now - _od_calls[0] > 30:
-            _od_calls.pop(0)
-        cap = 5 if background else OD_MAX_PER_30S
-        if len(_od_calls) < cap:
-            _od_calls.append(now)
-            return
+        with _od_lock:
+            now = time.time()
+            while _od_calls and now - _od_calls[0] > 30:
+                _od_calls.pop(0)
+            cap = 5 if background else OD_MAX_PER_30S
+            if len(_od_calls) < cap:
+                _od_calls.append(now)
+                return
         time.sleep(0.5)
 _cache: dict[str, tuple[float, dict]] = {}
 
@@ -131,26 +140,53 @@ def get_ctx() -> OpenQuoteContext:
     return quote_ctx
 
 
+# 在飞去重：同 key 刷新进行中时，有旧值的并发请求直接回旧值（不排队重算），
+# 没旧值的等在飞结果。ThreadingHTTPServer 每请求一线程，前端轮询会堆出
+# 大量重复 fetch_account/fetch_chain，全部打到 OpenD 配额上。
+_inflight: dict[str, threading.Event] = {}
+_inflight_lock = threading.Lock()
+
+
 def cached(key: str, fn, ttl: float = CACHE_TTL):
     now = time.time()
     hit = _cache.get(key)
     if hit and now - hit[0] < ttl:
         return hit[1]
+    with _inflight_lock:
+        ev = _inflight.get(key)
+        if ev is None:
+            ev = threading.Event()
+            _inflight[key] = ev
+            owner = True
+        else:
+            owner = False
+    if not owner:
+        if hit:
+            return hit[1]
+        ev.wait(timeout=90)
+        hit = _cache.get(key)
+        if hit:
+            return hit[1]
+        raise RuntimeError(f"refresh of {key} did not complete in time")
     try:
         val = fn()
+        _cache[key] = (time.time(), val)
+        return val
     except Exception:
         if hit:
             log.exception("refresh failed for %s, serving stale", key)
             return hit[1]
         raise
-    _cache[key] = (now, val)
-    return val
+    finally:
+        with _inflight_lock:
+            _inflight.pop(key, None)
+        ev.set()
 
 
 def fetch_expirations(symbol: str) -> dict:
     code = f"US.{symbol.upper()}"
+    _od_throttle()  # 先等配额再拿锁，持锁等配额会堵死所有交互请求
     with _quote_lock:
-        _od_throttle()
         ret, df = get_ctx().get_option_expiration_date(code=code)
     if ret != RET_OK:
         raise RuntimeError(f"get_option_expiration_date: {df}")
@@ -160,8 +196,8 @@ def fetch_expirations(symbol: str) -> dict:
 def fetch_chain(symbol: str, expiry: str) -> dict:
     code = f"US.{symbol.upper()}"
     ctx = get_ctx()
+    _od_throttle()  # 先等配额再拿锁，持锁等配额会堵死所有交互请求
     with _quote_lock:
-        _od_throttle()
         ret, df = ctx.get_option_chain(
             code=code, start=expiry, end=expiry, option_type=OptionType.ALL
         )
@@ -750,15 +786,18 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, {"plans": [], "warming_up": True,
                                      "note": "期权计划后台预热中（OpenD限频，约1-2分钟）"})
             elif parsed.path == "/paper-options":
-                self._send(200, paper_state())
+                with interactive_request():
+                    self._send(200, paper_state())
             elif parsed.path == "/account":
-                self._send(200, cached("account", fetch_account, ttl=ACCOUNT_TTL))
+                with interactive_request():
+                    self._send(200, cached("account", fetch_account, ttl=ACCOUNT_TTL))
             elif parsed.path == "/account/orders":
                 code = qs["code"][0]
-                self._send(
-                    200,
-                    cached(f"acct_orders:{code}", lambda: fetch_account_orders(code), ttl=ORDERS_TTL),
-                )
+                with interactive_request():
+                    self._send(
+                        200,
+                        cached(f"acct_orders:{code}", lambda: fetch_account_orders(code), ttl=ORDERS_TTL),
+                    )
             else:
                 self._send(404, {"error": "not found"})
         except KeyError as e:
