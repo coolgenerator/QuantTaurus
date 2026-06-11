@@ -357,7 +357,21 @@ pub async fn build_plans(state: &Arc<AppState>) -> anyhow::Result<Vec<TradePlan>
             interval: interval_s,
         });
     }
-    plans.sort_by(|a, b| a.key.cmp(&b.key));
+    // 排序：有信号的在前 → 置信度降序 → 信号强度降序（空仓计划沉底，同级按key稳定）
+    plans.sort_by(|a, b| {
+        let act_a = a.target_position.abs() > 0.05;
+        let act_b = b.target_position.abs() > 0.05;
+        act_b
+            .cmp(&act_a)
+            .then(b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                b.target_position
+                    .abs()
+                    .partial_cmp(&a.target_position.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(a.key.cmp(&b.key))
+    });
     Ok(plans)
 }
 
