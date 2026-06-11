@@ -10,6 +10,18 @@ pub struct KlineStore {
     dir: PathBuf,
     client: BinanceClient,
     yahoo: YahooClient,
+    /// 尾部刷新冷却：(symbol, interval) → 上次网络刷新 ms。
+    /// 44+ 槽位高频调用 get() 时避免对同一标的反复重抓尾部 bar
+    last_refresh: std::sync::Mutex<std::collections::HashMap<(String, Interval), i64>>,
+}
+
+/// 尾部刷新冷却期（毫秒）：日线及以上 60s，盘中粒度 15s
+fn tail_cooldown_ms(interval: Interval) -> i64 {
+    if interval.millis() >= 86_400_000 {
+        60_000
+    } else {
+        15_000
+    }
 }
 
 impl KlineStore {
@@ -19,6 +31,7 @@ impl KlineStore {
             dir: dir.as_ref().to_path_buf(),
             client: BinanceClient::new(),
             yahoo: YahooClient::new(),
+            last_refresh: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -59,10 +72,24 @@ impl KlineStore {
 
         let need_head = cached.first().map_or(true, |k| k.open_time > start_ms);
         // 尾部永远视为"暂定"：盘中抓到的bar收盘后才定稿（成交量补全、
-        // 收盘价修正），所以总是从缓存最后一根的 open_time 起重抓覆盖
+        // 收盘价修正），所以总是从缓存最后一根的 open_time 起重抓覆盖。
+        // 但加冷却期：冷却内直接用缓存，避免多会话高频调用打爆数据源限流
         let tail_start = cached.last().map(|k| k.open_time).unwrap_or(start_ms);
-        let need_tail = cached.last().map_or(true, |k| k.open_time + step < end_ms)
+        let mut need_tail = cached.last().map_or(true, |k| k.open_time + step < end_ms)
             || tail_start < end_ms;
+        if need_tail && !need_head && !cached.is_empty() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+            let key = (symbol.to_string(), interval);
+            let mut lr = self.last_refresh.lock().unwrap();
+            if now - lr.get(&key).copied().unwrap_or(0) < tail_cooldown_ms(interval) {
+                need_tail = false; // 冷却期内：直接用缓存
+            } else {
+                lr.insert(key, now);
+            }
+        }
 
         if need_head || need_tail {
             let fetch_start = if need_head { start_ms } else { tail_start };
