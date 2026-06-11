@@ -293,10 +293,14 @@ pub async fn build_plans(state: &Arc<AppState>) -> anyhow::Result<Vec<TradePlan>
         let Some(interval) = Interval::parse(&interval_s) else { continue };
         let step = interval.millis();
         let end = now_ms();
-        let mut klines = state
-            .store
-            .get(&symbol, interval, end - 1000 * step, end)
-            .await?;
+        // 单槽数据失败（如 Yahoo 限流）跳过该槽，不拖垮整个计划响应
+        let mut klines = match state.store.get(&symbol, interval, end - 1000 * step, end).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(key, error = %e, "plan: skip slot (kline fetch failed)");
+                continue;
+            }
+        };
         klines.retain(|k| k.open_time + step <= end);
         if klines.len() < 250 {
             continue;
