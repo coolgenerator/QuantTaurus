@@ -418,7 +418,9 @@ def paper_tick() -> None:
     """开仓新信号 → 标记持仓 → 按三条规则平仓。每5分钟一次。"""
     with _paper_lock:
         st = _paper_load()
-        report = build_option_plans()
+        # 用后台预热好的计划缓存；锁内绝不做分钟级的链拉取
+        hit = _cache.get("option_plans")
+        report = hit[1] if hit else {"plans": []}
         plan_by_underlying = {p["underlying"]: p for p in report["plans"]}
 
         # 标记现价
@@ -502,9 +504,21 @@ def _stock_plans_by_symbol() -> dict:
         return {}
 
 
+_paper_state_snap: dict = {}
+
+
 def paper_state() -> dict:
-    with _paper_lock:
+    global _paper_state_snap
+    # tick 可能持锁做报价拉取（限频下数秒~数十秒）：等2秒拿不到就回快照，不挂死前端
+    if not _paper_lock.acquire(timeout=2):
+        if _paper_state_snap:
+            return {**_paper_state_snap, "stale": True}
+        return {"positions": {}, "history": [], "equity": 1.0, "stale": True,
+                "note": "模拟盘tick进行中，数秒后自动刷新"}
+    try:
         st = _paper_load()
+    finally:
+        _paper_lock.release()
     # 动态退出参数（读取时实时计算，不落盘）
     plans = _stock_plans_by_symbol()
     for und, pos in st.get("positions", {}).items():
@@ -530,6 +544,7 @@ def paper_state() -> dict:
                 f"标的跌穿反转价平仓 / 到期前{CLOSE_DTE}天强平 —— 参数可经环境变量调整"
             ),
         }
+    _paper_state_snap = st
     return st
 
 
