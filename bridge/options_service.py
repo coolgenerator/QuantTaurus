@@ -44,7 +44,7 @@ from account_math import parse_option_code, position_pct, today_pl
 
 OPEND_HOST, OPEND_PORT = "127.0.0.1", 11111
 LISTEN_HOST, LISTEN_PORT = "127.0.0.1", 8788
-SNAPSHOT_BATCH = 380  # 单次快照上限 400，留余量
+SNAPSHOT_BATCH = 380  # 单次快照上限 400，留余量  # 单次快照上限 400，留余量
 CACHE_TTL = 120       # 秒；期权快照接口有频率限制（60次/30s），必须缓存
 
 QHH_API = "http://localhost:8787"
@@ -72,20 +72,53 @@ PAPER_FILE = os.path.join(
 
 log = logging.getLogger("options-service")
 _quote_lock = threading.Lock()
+# 交互请求计数：>0 时后台预热在标的之间让路，保证前端加载不排队
+_interactive = 0
+_interactive_lock = threading.Lock()
+
+
+class interactive_request:
+    def __enter__(self):
+        global _interactive
+        with _interactive_lock:
+            _interactive += 1
+
+    def __exit__(self, *a):
+        global _interactive
+        with _interactive_lock:
+            _interactive -= 1
+
+
+def _yield_to_interactive():
+    for _ in range(100):
+        with _interactive_lock:
+            busy = _interactive > 0
+        if not busy:
+            return
+        time.sleep(0.3)
 # OpenD 期权接口限频：官方 10 次/30 秒，留余量按 8 次执行
 _od_calls: list[float] = []
 OD_MAX_PER_30S = 8
 
 
 def _od_throttle():
+    # 后台线程（计划预热）配额降级：最多5/30s，且交互请求等待期间完全让路
+    background = threading.current_thread().name == "options-plans"
     while True:
+        if background:
+            with _interactive_lock:
+                busy = _interactive > 0
+            if busy:
+                time.sleep(0.3)
+                continue
         now = time.time()
         while _od_calls and now - _od_calls[0] > 30:
             _od_calls.pop(0)
-        if len(_od_calls) < OD_MAX_PER_30S:
+        cap = 5 if background else OD_MAX_PER_30S
+        if len(_od_calls) < cap:
             _od_calls.append(now)
             return
-        time.sleep(30 - (now - _od_calls[0]) + 0.1)
+        time.sleep(0.5)
 _cache: dict[str, tuple[float, dict]] = {}
 
 quote_ctx: OpenQuoteContext | None = None
@@ -142,7 +175,11 @@ def fetch_chain(symbol: str, expiry: str) -> dict:
         ret_u, udf = ctx.get_market_snapshot([code])
     spot = float(udf.iloc[0]["last_price"]) if ret_u == RET_OK else 0.0
 
-    # 期权快照（分批，限频 60/30s → 批间 sleep）
+    # 行权价窗口：现价±30%之外的深虚值合约直接略过（没人看且省快照配额）
+    if spot > 0:
+        df = df[(df["strike_price"] >= spot * 0.7) & (df["strike_price"] <= spot * 1.3)]
+
+    # 期权快照（单批最多400码；超出才分批）
     codes = df["code"].tolist()
     snaps = {}
     for i in range(0, len(codes), SNAPSHOT_BATCH):
@@ -258,7 +295,7 @@ def dte(expiry: str) -> int:
 
 def pick_expiry(symbol: str, horizon_days: float) -> str | None:
     """选最近的满足 持有期×1.5（且≥MIN_DTE）的到期日"""
-    exps = cached(f"exp:{symbol}", lambda: fetch_expirations(symbol))["expirations"]
+    exps = cached(f"exp:{symbol}", lambda: fetch_expirations(symbol), ttl=3600)["expirations"]
     want = max(MIN_DTE, math.ceil(horizon_days * HORIZON_BUFFER))
     for e in exps:
         if dte(e) >= want:
@@ -288,6 +325,7 @@ def build_option_plans() -> dict:
         fetch_stock_plans(), key=lambda p: abs(p.get("target_position", 0)), reverse=True
     )[:12]  # 限频预算：每标的≥2次OpenD调用，12个 ≈ 1.5个30秒窗口
     for sp in stock_plans:
+        _yield_to_interactive()
         sym = sp["symbol"]
         if sym.endswith(("USDT", "USDC", "BUSD")):
             continue  # 期权仅美股
@@ -683,10 +721,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True})
             elif parsed.path == "/expirations":
                 symbol = qs["symbol"][0]
-                self._send(200, cached(f"exp:{symbol}", lambda: fetch_expirations(symbol)))
+                with interactive_request():
+                    self._send(200, cached(f"exp:{symbol}", lambda: fetch_expirations(symbol), ttl=3600))
             elif parsed.path == "/chain":
                 symbol, expiry = qs["symbol"][0], qs["expiry"][0]
-                self._send(200, cached(f"chain:{symbol}:{expiry}", lambda: fetch_chain(symbol, expiry)))
+                with interactive_request():
+                    self._send(200, cached(f"chain:{symbol}:{expiry}", lambda: fetch_chain(symbol, expiry)))
             elif parsed.path == "/plans":
                 hit = _cache.get("option_plans")
                 if hit:
@@ -713,6 +753,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(502, {"error": str(e)})
 
 
+PLANS_REFRESH_SEC = 300
+
+
 def plans_refresher():
     """后台预热期权计划：HTTP 请求永远直接读缓存（秒回），重活在这条线程里干。"""
     while True:
@@ -721,7 +764,7 @@ def plans_refresher():
             _cache["option_plans"] = (time.time(), val)
         except Exception:
             log.exception("plans refresh failed (will retry)")
-        time.sleep(CACHE_TTL)
+        time.sleep(PLANS_REFRESH_SEC)
 
 
 def main():
