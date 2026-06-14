@@ -79,7 +79,7 @@
   监督agentic loop）。Agent只在监督层参与（假设提出/负结果归因/前向诊断）
 - [x] /api/evolve_sweep + status：56标的顺序进化，自适应窗口（留出90+验证600+训练其余，
   <1100根跳过），margin0.1+floor0闸门
-- [x] QHH_AUTOSWEEP_HOURS=24 每日自动扫描（0=关）
+- [x] QT_AUTOSWEEP_HOURS=24 每日自动扫描（0=关）
 - [x] 首轮扫描（100秒）：**41/56晋升**，拒绝全部留出≤0（BTC -0.01/ETH -0.08/CEG/HOOD/
   QCOM/VST），4个历史太短跳过。AMD纯rule_vote holdout 2.41全场最高；
   ON/ORCL也是纯rule_vote冠军。注册表44冠军，模拟盘44会话自动开启（2026-06-10起算）
@@ -98,7 +98,7 @@
 ## P21 技术面×量化模型融合（用户指令"先做1再做2"，2026-06-10 完成）
 
 - ①仓位调制：规则引擎下沉 qfactors::ta_rules；A/B验证（4年×6冠军槽）→ **负结果**
-  （4/6变差，boost/cut单腿也不行）→ 默认关闭（QHH_TA_MOD=1实验开启），
+  （4/6变差，boost/cut单腿也不行）→ 默认关闭（QT_TA_MOD=1实验开启），
   /api/ta/modulation_check 端点保留。结论：共振信号不含冠军策略外的增量信息
 - ②RuleVote 策略家族：买入规则子集投票进场+固定持有+卖出共振提前离场（长仓only），
   入 evolve 基因池（family 5）。QQQ 1d 10年实验（505 evals）：
@@ -161,7 +161,7 @@
 - [x] P7 集成联调：Vite 代理验证通过（注意：本机 5173 被其他项目占用，我们的前端在 **5174**）；2年BTC 1h 全量进化（600 evals）端到端跑通
 - [x] P8a 多折验证适应度（CPCV-lite：3折，fitness = 折均值 - 0.75×折标准差）
 - [x] P8b 4h 周期 BTC/ETH 实验（见下方发现）
-- [x] P8c 自动再训练调度器（QHH_AUTORETRAIN_HOURS 默认6h，0=关；SYMBOL/INTERVAL/DAYS 可配）
+- [x] P8c 自动再训练调度器（QT_AUTORETRAIN_HOURS 默认6h，0=关；SYMBOL/INTERVAL/DAYS 可配）
 - [x] P8d 晋升绝对底线 promotion_floor（留出 Sharpe ≤0 永不晋升，宁缺毋滥；champion.json 已清空重置）
 - [x] P9 策略质量迭代完成：
       a. 折散布全历史（evolve v3）：4h 高 Sharpe 幻象消失（折均值跌到 ~0.5），

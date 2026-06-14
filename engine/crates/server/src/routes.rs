@@ -72,10 +72,16 @@ async fn swr_json(
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key)
-        .ok()
+    env_var(key)
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+fn env_var(key: &str) -> Option<String> {
+    std::env::var(key).ok().or_else(|| {
+        key.strip_prefix("QT_")
+            .and_then(|suffix| std::env::var(format!("QHH_{suffix}")).ok())
+    })
 }
 
 /// 按资产类别返回（每年bar数, 成本模型）。
@@ -105,12 +111,12 @@ pub fn market_params(symbol: &str, interval: Interval) -> (f64, CostModel) {
         };
         // 股票默认按 moomoo 美股口径：零佣金零平台费，仅卖出侧监管费
         // (SEC ~0.0000278 + FINRA TAF) ≈ 单边均摊 0.2bp；滑点 3bp 保守
-        // 可用 QHH_STOCK_FEE / QHH_STOCK_SLIPPAGE 覆盖
+        // 可用 QT_STOCK_FEE / QT_STOCK_SLIPPAGE 覆盖
         (
             252.0 * bars_per_trading_day,
             CostModel {
-                fee_rate: env_f64("QHH_STOCK_FEE", 0.00002),
-                slippage: env_f64("QHH_STOCK_SLIPPAGE", 0.0003),
+                fee_rate: env_f64("QT_STOCK_FEE", 0.00002),
+                slippage: env_f64("QT_STOCK_SLIPPAGE", 0.0003),
                 ..Default::default()
             },
         )

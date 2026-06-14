@@ -25,6 +25,13 @@ use state::AppState;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
+fn env_var(key: &str) -> Option<String> {
+    std::env::var(key).ok().or_else(|| {
+        key.strip_prefix("QT_")
+            .and_then(|suffix| std::env::var(format!("QHH_{suffix}")).ok())
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -34,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let data_dir = std::env::var("QHH_DATA_DIR").unwrap_or_else(|_| "data".into());
+    let data_dir = env_var("QT_DATA_DIR").unwrap_or_else(|| "data".into());
     let state = Arc::new(AppState::new(&data_dir)?);
 
     // 启动实时行情流（默认主流币）
@@ -107,12 +114,11 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // 自动扫描调度器：每 QHH_AUTOSWEEP_HOURS 小时全宇宙进化扫描（默认 24，0=关闭）
+    // 自动扫描调度器：每 QT_AUTOSWEEP_HOURS 小时全宇宙进化扫描（默认 24，0=关闭）
     {
         let st = state.clone();
         tokio::spawn(async move {
-            let hours: u64 = std::env::var("QHH_AUTOSWEEP_HOURS")
-                .ok()
+            let hours: u64 = env_var("QT_AUTOSWEEP_HOURS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(24);
             if hours == 0 {
@@ -138,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // 自动再训练调度器：每 QHH_AUTORETRAIN_HOURS 小时（默认 6，0=关闭）
+    // 自动再训练调度器：每 QT_AUTORETRAIN_HOURS 小时（默认 6，0=关闭）
     // 用最新数据重跑 walk-forward 进化，冠军仅在留出集胜出时热更新
     spawn_auto_retrain(state.clone());
 
@@ -186,18 +192,16 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn spawn_auto_retrain(state: Arc<AppState>) {
-    let hours: u64 = std::env::var("QHH_AUTORETRAIN_HOURS")
-        .ok()
+    let hours: u64 = env_var("QT_AUTORETRAIN_HOURS")
         .and_then(|v| v.parse().ok())
         .unwrap_or(6);
     if hours == 0 {
         tracing::info!("auto-retrain disabled");
         return;
     }
-    let symbol = std::env::var("QHH_AUTORETRAIN_SYMBOL").unwrap_or_else(|_| "BTCUSDT".into());
-    let interval_s = std::env::var("QHH_AUTORETRAIN_INTERVAL").unwrap_or_else(|_| "4h".into());
-    let days: i64 = std::env::var("QHH_AUTORETRAIN_DAYS")
-        .ok()
+    let symbol = env_var("QT_AUTORETRAIN_SYMBOL").unwrap_or_else(|| "BTCUSDT".into());
+    let interval_s = env_var("QT_AUTORETRAIN_INTERVAL").unwrap_or_else(|| "4h".into());
+    let days: i64 = env_var("QT_AUTORETRAIN_DAYS")
         .and_then(|v| v.parse().ok())
         .unwrap_or(730);
 

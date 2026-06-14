@@ -32,7 +32,9 @@ python3 bridge/moomoo_bridge.py
 ## 服务器开机自启（可选）
 
 ```bash
-cp deploy/com.quanttaurus.server.plist ~/Library/LaunchAgents/
+ROOT="$(pwd)"
+sed "s#__QUANTTAURUS_ROOT__#$ROOT#g" deploy/com.quanttaurus.server.plist \
+  > ~/Library/LaunchAgents/com.quanttaurus.server.plist
 launchctl load ~/Library/LaunchAgents/com.quanttaurus.server.plist
 ```
 

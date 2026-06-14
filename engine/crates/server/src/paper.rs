@@ -21,8 +21,15 @@ const HISTORY_BARS: i64 = 500;
 const MARK_THROTTLE_MS: i64 = 3000;
 const MAX_CURVE_POINTS: usize = 5000;
 
+fn env_var(key: &str) -> Option<String> {
+    std::env::var(key).ok().or_else(|| {
+        key.strip_prefix("QT_")
+            .and_then(|suffix| std::env::var(format!("QHH_{suffix}")).ok())
+    })
+}
+
 fn stock_long_only() -> bool {
-    std::env::var("QHH_STOCK_LONG_ONLY").map_or(true, |v| v != "0")
+    env_var("QT_STOCK_LONG_ONLY").map_or(true, |v| v != "0")
 }
 
 /// 粗略的美股盘中判断（UTC 周一~周五 13:30–20:00；不处理假日与夏令时1小时偏差）
@@ -39,27 +46,25 @@ pub fn us_market_open() -> bool {
 }
 
 /// 盘中再决策周期（分钟）：盘中每 N 分钟用最新价作临时收盘正式重算信号并调仓。
-/// 股票仅美股盘中，加密全天；周期 ≤30 分钟的槽位跳过。QHH_INTRADAY_MINUTES=0 关闭。
+/// 股票仅美股盘中，加密全天；周期 ≤30 分钟的槽位跳过。QT_INTRADAY_MINUTES=0 关闭。
 pub fn intraday_minutes() -> u64 {
-    std::env::var("QHH_INTRADAY_MINUTES")
-        .ok()
+    env_var("QT_INTRADAY_MINUTES")
         .and_then(|v| v.parse().ok())
         .unwrap_or(30)
 }
 
 /// 盘中调仓死区：目标仓位变化小于该值不动作（防盘中噪声反复刷手续费）
 fn intraday_min_delta() -> f64 {
-    std::env::var("QHH_INTRADAY_MIN_DELTA")
-        .ok()
+    env_var("QT_INTRADAY_MIN_DELTA")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.10)
 }
 
 /// 经典信号仓位调制开关。**默认关闭**：4年A/B回测显示共振调制在6冠军槽
 /// 无一致增益（SPY 1.60→1.52 / QQQ 0.53→0.39，boost/cut单腿也不行）——
-/// 经典信号共振不含冠军策略之外的增量信息。设 QHH_TA_MOD=1 可实验性开启。
+/// 经典信号共振不含冠军策略之外的增量信息。设 QT_TA_MOD=1 可实验性开启。
 fn ta_modulation_enabled() -> bool {
-    std::env::var("QHH_TA_MOD").map_or(false, |v| v == "1")
+    env_var("QT_TA_MOD").map_or(false, |v| v == "1")
 }
 
 /// 经典信号共振 → 逐bar仓位调制系数（与klines等长）。
@@ -226,7 +231,7 @@ pub fn start_paper_engine(state: Arc<AppState>) {
         }
     });
 
-    // 任务3：盘中再决策——每 QHH_INTRADAY_MINUTES 分钟把当前未收盘 bar 以
+    // 任务3：盘中再决策——每 QT_INTRADAY_MINUTES 分钟把当前未收盘 bar 以
     // 最新价作临时收盘，正式重算信号并调仓（带死区）。收盘决策路径不受影响。
     let minutes = intraday_minutes();
     if minutes > 0 {
@@ -245,14 +250,13 @@ pub fn start_paper_engine(state: Arc<AppState>) {
 }
 
 fn max_dd_limit() -> f64 {
-    std::env::var("QHH_MAX_DD")
-        .ok()
+    env_var("QT_MAX_DD")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.15)
 }
 
 /// 组合回撤熔断（机构 kill-switch）：全部会话平均净值相对历史峰值
-/// 回撤超过 QHH_MAX_DD（默认15%）时，停止开新仓、全部目标仓位清零，
+/// 回撤超过 QT_MAX_DD（默认15%）时，停止开新仓、全部目标仓位清零，
 /// 直到人工干预（删除 data/risk_halt 文件）或回撤恢复到一半以内。
 fn check_kill_switch(state: &Arc<AppState>) -> bool {
     let halt_file = state.paper_path.with_file_name("risk_halt");

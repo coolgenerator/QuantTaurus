@@ -6,10 +6,10 @@
     <string>com.quanttaurus.server</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/jason/Documents/Github/QuantHaHa/engine/target/release/server</string>
+        <string>__QUANTTAURUS_ROOT__/engine/target/release/server</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/jason/Documents/Github/QuantHaHa/engine</string>
+    <string>__QUANTTAURUS_ROOT__/engine</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

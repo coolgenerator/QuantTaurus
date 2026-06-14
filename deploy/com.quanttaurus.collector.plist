@@ -8,7 +8,7 @@
     <array>
         <string>/usr/bin/env</string>
         <string>python3</string>
-        <string>/Users/jason/Documents/Github/QuantHaHa/bridge/intraday_collector.py</string>
+        <string>__QUANTTAURUS_ROOT__/bridge/intraday_collector.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

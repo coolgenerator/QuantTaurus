@@ -44,7 +44,7 @@ pub struct TradePlan {
     /// 20日已实现日波动
     pub vol_daily: f64,
     /// 盘中再决策试算：未收盘bar以最新价作临时收盘的目标仓位。
-    /// 模拟盘每 QHH_INTRADAY_MINUTES 分钟按此正式调仓；非盘中/未启用为 None
+    /// 模拟盘每 QT_INTRADAY_MINUTES 分钟按此正式调仓；非盘中/未启用为 None
     pub intraday_target: Option<f64>,
     pub intraday_price: Option<f64>,
     pub intraday_as_of: Option<i64>,
@@ -487,12 +487,12 @@ pub struct PortfolioPlan {
 }
 
 /// 组合风控：等权资金分配 → 总杠杆上限 + 组合目标波动率双重约束统一缩放。
-/// 可用 QHH_GROSS_CAP（默认 1.0 = 不加杠杆）/ QHH_VOL_TARGET（默认 0.15 年化）调节。
+/// 可用 QT_GROSS_CAP（默认 1.0 = 不加杠杆）/ QT_VOL_TARGET（默认 0.15 年化）调节。
 pub async fn build_portfolio(state: &Arc<AppState>) -> anyhow::Result<PortfolioPlan> {
     let plans = cached_plans(state).await?;
     let n = plans.len().max(1) as f64;
-    let gross_cap = env_f64("QHH_GROSS_CAP", 1.0);
-    let vol_target_annual = env_f64("QHH_VOL_TARGET", 0.15);
+    let gross_cap = env_f64("QT_GROSS_CAP", 1.0);
+    let vol_target_annual = env_f64("QT_VOL_TARGET", 0.15);
     let rho = 0.6; // 保守的同向相关性假设（风险偏高估而非低估）
 
     let raw: Vec<(f64, f64)> = plans
@@ -558,8 +558,14 @@ pub async fn build_portfolio(state: &Arc<AppState>) -> anyhow::Result<PortfolioP
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key)
-        .ok()
+    env_var(key)
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+fn env_var(key: &str) -> Option<String> {
+    std::env::var(key).ok().or_else(|| {
+        key.strip_prefix("QT_")
+            .and_then(|suffix| std::env::var(format!("QHH_{suffix}")).ok())
+    })
 }

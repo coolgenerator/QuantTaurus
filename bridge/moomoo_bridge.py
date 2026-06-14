@@ -41,7 +41,19 @@ except ImportError:  # pragma: no cover
 # 视为"未成交挂单"的状态（这些单的数量必须计入有效仓位，否则休市时会重复下单）
 PENDING_STATUSES = {"WAITING_SUBMIT", "SUBMITTING", "SUBMITTED", "FILLED_PART"}
 
-QHH_API = "http://localhost:8787"
+
+def env(name: str, default: str) -> str:
+    """Prefer QT_* variables; keep QHH_* as a legacy fallback."""
+    if name in os.environ:
+        return os.environ[name]
+    if name.startswith("QT_"):
+        legacy = "QHH_" + name[3:]
+        if legacy in os.environ:
+            return os.environ[legacy]
+    return default
+
+
+QT_API = env("QT_API", "http://localhost:8787")
 OPEND_HOST, OPEND_PORT = "127.0.0.1", 11111
 POLL_SEC = 60
 ALLOC_USD = 10_000.0   # 每个策略槽位的名义资金
@@ -58,7 +70,7 @@ def is_crypto(symbol: str) -> bool:
 
 def fetch_targets() -> dict[str, tuple[float, float]]:
     """返回 {symbol: (目标仓位[-1,1], 最新价)}，仅美股。"""
-    r = requests.get(f"{QHH_API}/api/paper", timeout=10)
+    r = requests.get(f"{QT_API}/api/paper", timeout=10)
     r.raise_for_status()
     sessions = r.json().get("sessions", {})
     out = {}

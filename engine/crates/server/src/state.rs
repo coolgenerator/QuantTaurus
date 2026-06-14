@@ -254,7 +254,7 @@ fn apply_promotion(
 
 /// 全宇宙进化扫描：逐标的顺序进化（每标的~1-2分钟CPU），晋升走与单跑相同的
 /// margin+floor 闸门。自进化模式的调度层：可由 /api/evolve_sweep 手动触发，
-/// 或 QHH_AUTOSWEEP_HOURS 周期自动触发。
+/// 或 QT_AUTOSWEEP_HOURS 周期自动触发。
 pub fn launch_sweep(
     state: std::sync::Arc<AppState>,
     symbols: Vec<String>,
