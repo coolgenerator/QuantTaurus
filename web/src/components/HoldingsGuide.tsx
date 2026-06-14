@@ -9,13 +9,13 @@ import {
   type OptionPaperPosition,
   type PaperSession,
   type TradePlan, slotLabel,} from '../api'
-
-const OPT_SERVICE_HINT =
-  '期权服务未运行：python3 bridge/options_service.py（需 OpenD 已登录）'
+import { useI18n } from '../i18n'
 
 /** Legacy fallback when the backend hasn't attached exit_dynamic (old positions). */
-const OPTION_EXIT_RULES_TITLE =
-  '自动平仓规则：① 股票信号反转（方向翻转即平仓） ② 剩余 DTE ≤ 7 强制平仓 ③ 权利金 -50% 止损 ④ 权利金 +100% 止盈'
+const optionExitRulesTitle = (zh: boolean) =>
+  zh
+    ? '自动平仓规则：① 股票信号反转（方向翻转即平仓） ② 剩余 DTE ≤ 7 强制平仓 ③ 权利金 -50% 止损 ④ 权利金 +100% 止盈'
+    : 'Auto-close rules: 1. stock signal flips, 2. remaining DTE <= 7, 3. premium -50% stop, 4. premium +100% take profit'
 
 const DAY_MS = 86_400_000
 
@@ -30,14 +30,14 @@ function fmtUsd(v: number | null | undefined, digits = 2): string {
 }
 
 /** Countdown to next_decision_ms, e.g. "2h 31m 08s 后". */
-function fmtCountdown(targetMs: number, nowMs: number): string {
+function fmtCountdown(targetMs: number, nowMs: number, zh: boolean): string {
   const remain = targetMs - nowMs
-  if (!targetMs || remain <= 0) return '待数据刷新'
+  if (!targetMs || remain <= 0) return zh ? '待数据刷新' : 'waiting for refresh'
   const sec = Math.floor(remain / 1000)
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
-  return `${h}h ${m}m ${String(s).padStart(2, '0')}s 后`
+  return zh ? `${h}h ${m}m ${String(s).padStart(2, '0')}s 后` : `in ${h}h ${m}m ${String(s).padStart(2, '0')}s`
 }
 
 function fmtSignedPct(v: number): string {
@@ -64,30 +64,33 @@ function fmtEntryTime(ms: number): string {
 }
 
 /** Relative time, e.g. "刚刚" / "35分钟前" / "2小时前" / "3天前". */
-function fmtRelative(ms: number, nowMs: number): string {
+function fmtRelative(ms: number, nowMs: number, zh: boolean): string {
   const diff = nowMs - ms
   if (diff < 0) return ''
   const min = Math.floor(diff / 60_000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min}分钟前`
+  if (min < 1) return zh ? '刚刚' : 'just now'
+  if (min < 60) return zh ? `${min}分钟前` : `${min}m ago`
   const h = Math.floor(min / 60)
-  if (h < 24) return `${h}小时前`
-  return `${Math.floor(h / 24)}天前`
+  if (h < 24) return zh ? `${h}小时前` : `${h}h ago`
+  return zh ? `${Math.floor(h / 24)}天前` : `${Math.floor(h / 24)}d ago`
 }
 
 /** "06-10 07:04" + relative-time subline; em-dash when missing. */
 function EntryTimeCell({ entryMs, nowMs }: { entryMs: number | undefined; nowMs: number }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   if (!entryMs || !Number.isFinite(entryMs)) return <span className="text-slate-600">—</span>
   return (
     <div className="whitespace-nowrap">
       <span className="text-slate-200">{fmtEntryTime(entryMs)}</span>
-      <p className="mt-0.5 text-[10px] text-slate-600">{fmtRelative(entryMs, nowMs)}</p>
+      <p className="mt-0.5 text-[10px] text-slate-600">{fmtRelative(entryMs, nowMs, zh)}</p>
     </div>
   )
 }
 
 /** Signed equivalent shares (long green / short red) + notional subline. */
 function SharesCell({ session }: { session: PaperSession }) {
+  const { t } = useI18n()
   const sh = session.shares_equiv
   if (sh === undefined || !Number.isFinite(sh)) return <span className="text-slate-600">—</span>
   const cls = sh > 1e-9 ? 'text-neon-green' : sh < -1e-9 ? 'text-neon-red' : 'text-slate-400'
@@ -95,32 +98,29 @@ function SharesCell({ session }: { session: PaperSession }) {
     <div className="whitespace-nowrap">
       <span className={`font-bold ${cls}`}>
         {sh > 0 ? '+' : ''}
-        {sh.toFixed(1)} 股
+        {sh.toFixed(1)} {t('common.shares')}
       </span>
       <p className="mt-0.5 text-[10px] text-slate-600">
-        ≈{fmtUsd(Math.abs(session.notional_usd ?? 0), 0)} 名义
+        ≈{fmtUsd(Math.abs(session.notional_usd ?? 0), 0)} {t('common.notional')}
       </p>
     </div>
   )
 }
 
-const SHARES_EQUIV_TITLE =
-  '等效股数 = 仓位比例 × $10k 槽位名义资金 ÷ 现价；与 moomoo 模拟账户实际下单股数同口径'
-
-function positionBadge(p: number): { text: string; cls: string } {
+function positionBadge(p: number, zh: boolean): { text: string; cls: string } {
   if (p > 1e-9) {
     return {
-      text: `多 LONG ${Math.round(p * 100)}%`,
+      text: `${zh ? '多' : 'LONG'} ${Math.round(p * 100)}%`,
       cls: 'border-neon-green/40 bg-neon-green/10 text-neon-green',
     }
   }
   if (p < -1e-9) {
     return {
-      text: `空 SHORT ${Math.round(Math.abs(p) * 100)}%`,
+      text: `${zh ? '空' : 'SHORT'} ${Math.round(Math.abs(p) * 100)}%`,
       cls: 'border-neon-red/40 bg-neon-red/10 text-neon-red',
     }
   }
-  return { text: '观望 FLAT', cls: 'border-white/15 bg-white/5 text-slate-400' }
+  return { text: zh ? '观望 FLAT' : 'FLAT', cls: 'border-white/15 bg-white/5 text-slate-400' }
 }
 
 // ---------- stock holdings ----------
@@ -133,6 +133,8 @@ interface StockRow {
 
 /** Mini ±1σ target-zone bar with a dot at the current price. */
 function MiniTargetZone({ plan }: { plan: TradePlan }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   if (plan.target_zone_low === null || plan.target_zone_high === null) {
     return <span className="text-slate-600">—</span>
   }
@@ -150,7 +152,7 @@ function MiniTargetZone({ plan }: { plan: TradePlan }) {
         <span
           className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-ink bg-neon-cyan shadow-[0_0_6px_rgba(34,211,238,0.9)]"
           style={{ left: `${(pos * 100).toFixed(1)}%` }}
-          title={`现价 ${fmtNum(plan.last_close)} 在区间内位置 ${(pos * 100).toFixed(0)}%`}
+          title={zh ? `现价 ${fmtNum(plan.last_close)} 在区间内位置 ${(pos * 100).toFixed(0)}%` : `current ${fmtNum(plan.last_close)} at ${(pos * 100).toFixed(0)}% of range`}
         />
       </div>
     </div>
@@ -158,10 +160,12 @@ function MiniTargetZone({ plan }: { plan: TradePlan }) {
 }
 
 function FlipCell({ plan }: { plan: TradePlan }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   return (
     <div>
       {plan.flip_price === null ? (
-        <span className="text-slate-500">±40% 内稳固</span>
+        <span className="text-slate-500">{zh ? '±40% 内稳固' : 'stable within +/-40%'}</span>
       ) : (
         <span className={plan.target_position >= 0 ? 'text-neon-red' : 'text-neon-green'}>
           {fmtNum(plan.flip_price)}
@@ -170,16 +174,19 @@ function FlipCell({ plan }: { plan: TradePlan }) {
           )}
         </span>
       )}
-      <p className="mt-0.5 text-[10px] text-slate-600">每日收盘动态重算</p>
+      <p className="mt-0.5 text-[10px] text-slate-600">{zh ? '每日收盘动态重算' : 'recomputed after each close'}</p>
     </div>
   )
 }
 
 function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }) {
+  const { lang, t } = useI18n()
+  const zh = lang === 'zh'
+  const sharesTitle = t('paper.equivSharesTitle')
   if (rows.length === 0) {
     return (
       <div className="flex h-20 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-        暂无股票持仓——冠军模拟盘开仓后自动显示
+        {zh ? '暂无股票持仓——冠军模拟盘开仓后自动显示' : 'No stock positions. Champion paper positions appear here after entry.'}
       </div>
     )
   }
@@ -190,14 +197,14 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
           <tr className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
             {(
               [
-                { label: '标的' },
-                { label: '方向 · 仓位' },
-                { label: '持仓数量', title: SHARES_EQUIV_TITLE },
-                { label: '建仓日期' },
-                { label: '现价' },
-                { label: '信号反转价' },
-                { label: '统计目标区间' },
-                { label: '下一决策' },
+                { label: zh ? '标的' : 'Symbol' },
+                { label: zh ? '方向 · 仓位' : 'Direction · Position' },
+                { label: zh ? '持仓数量' : 'Shares', title: sharesTitle },
+                { label: zh ? '建仓日期' : 'Entry time' },
+                { label: zh ? '现价' : 'Price' },
+                { label: zh ? '信号反转价' : 'Flip price' },
+                { label: zh ? '统计目标区间' : 'Target zone' },
+                { label: zh ? '下一决策' : 'Next decision' },
               ] as { label: string; title?: string }[]
             ).map((h) => (
               <th
@@ -213,7 +220,7 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
         </thead>
         <tbody>
           {rows.map(({ key, session, plan }) => {
-            const badge = positionBadge(session.position)
+            const badge = positionBadge(session.position, zh)
             return (
               <tr
                 key={key}
@@ -223,7 +230,7 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
                 <td className="px-2.5 py-2">
                   <span className={`badge border ${badge.cls}`}>{badge.text}</span>
                 </td>
-                <td className="px-2.5 py-2" title={SHARES_EQUIV_TITLE}>
+                <td className="px-2.5 py-2" title={sharesTitle}>
                   <SharesCell session={session} />
                 </td>
                 <td className="px-2.5 py-2">
@@ -239,7 +246,7 @@ function StockHoldingsTable({ rows, nowMs }: { rows: StockRow[]; nowMs: number }
                   {plan ? <MiniTargetZone plan={plan} /> : <span className="text-slate-600">—</span>}
                 </td>
                 <td className="px-2.5 py-2 text-neon-purple">
-                  {plan ? fmtCountdown(plan.next_decision_ms, nowMs) : '—'}
+                  {plan ? fmtCountdown(plan.next_decision_ms, nowMs, zh) : '—'}
                 </td>
               </tr>
             )
@@ -266,6 +273,8 @@ function StopTargetBar({
   mark: number
   exit?: OptionExitDynamic
 }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const lo = exit ? exit.sl_premium : entry * 0.5
   const hi = exit ? exit.tp_premium : entry * 2.0
   const slPct = exit ? exit.sl_pct_effective : -50
@@ -276,10 +285,10 @@ function StopTargetBar({
   return (
     <div className="min-w-[150px]">
       <div className="flex items-center justify-between font-mono text-[10px]">
-        <span className="text-neon-red" title={`止损价（权利金 ${fmtSignedPct(slPct)}）`}>
+        <span className="text-neon-red" title={zh ? `止损价（权利金 ${fmtSignedPct(slPct)}）` : `stop premium (${fmtSignedPct(slPct)})`}>
           {fmtUsd(lo)}
         </span>
-        <span className="text-neon-green" title="止盈价">
+        <span className="text-neon-green" title={zh ? '止盈价' : 'take-profit premium'}>
           {fmtUsd(hi)}
         </span>
       </div>
@@ -291,17 +300,17 @@ function StopTargetBar({
               : 'bg-neon-cyan shadow-[0_0_6px_rgba(34,211,238,0.9)]'
           }`}
           style={{ left: `${(pos * 100).toFixed(1)}%` }}
-          title={`现价 ${fmtUsd(mark)}${danger ? ' · 接近止损线！' : ''}`}
+          title={`${zh ? '现价' : 'mark'} ${fmtUsd(mark)}${danger ? (zh ? ' · 接近止损线！' : ' · near stop!') : ''}`}
         />
       </div>
       <p className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-600">
-        止损 {fmtSignedPct(slPct)}
+        {zh ? '止损' : 'Stop'} {fmtSignedPct(slPct)}
         {exit?.iv_adaptive && (
           <span
             className="rounded border border-neon-purple/40 bg-neon-purple/10 px-1 text-[9px] leading-tight text-neon-purple"
-            title="止损宽度按建仓 IV 自适应调整"
+            title={zh ? '止损宽度按建仓 IV 自适应调整' : 'Stop width adapts to entry IV'}
           >
-            IV自适应
+            {zh ? 'IV自适应' : 'IV-adaptive'}
           </span>
         )}
       </p>
@@ -336,6 +345,8 @@ function SellByCell({
   exit?: OptionExitDynamic
   nowMs: number
 }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const exp = parseExpiry(expiry)
   if (exit && Number.isFinite(exit.planned_exit_ms) && exit.planned_exit_ms > 0) {
     const planned = new Date(exit.planned_exit_ms)
@@ -349,12 +360,12 @@ function SellByCell({
           </>
         )}
         <span className={sellByTone(daysLeft)}>
-          最迟 {fmtShortDate(planned)} 卖出 ·{' '}
-          {daysLeft < 0 ? '已超期' : `还剩 ${daysLeft} 天`}
+          {zh ? `最迟 ${fmtShortDate(planned)} 卖出` : `sell by ${fmtShortDate(planned)}`} ·{' '}
+          {daysLeft < 0 ? (zh ? '已超期' : 'overdue') : (zh ? `还剩 ${daysLeft} 天` : `${daysLeft}d left`)}
           {daysLeft >= 0 && daysLeft <= 3 && ' ⚠'}
         </span>
         <p className="mt-0.5 text-[10px] text-slate-600">
-          {exit.planned_exit_ms < exit.hard_close_ms ? '(信号持有期)' : '(到期强平)'}
+          {exit.planned_exit_ms < exit.hard_close_ms ? (zh ? '(信号持有期)' : '(signal horizon)') : (zh ? '(到期强平)' : '(expiry force close)')}
         </p>
       </div>
     )
@@ -368,8 +379,8 @@ function SellByCell({
       <span className="text-slate-400">{fmtShortDate(exp)}</span>
       <span className="text-slate-600"> → </span>
       <span className={sellByTone(daysLeft)}>
-        最迟 {fmtShortDate(sellBy)} 卖出 ·{' '}
-        {daysLeft < 0 ? '已超期' : `还剩 ${daysLeft} 天`}
+        {zh ? `最迟 ${fmtShortDate(sellBy)} 卖出` : `sell by ${fmtShortDate(sellBy)}`} ·{' '}
+        {daysLeft < 0 ? (zh ? '已超期' : 'overdue') : (zh ? `还剩 ${daysLeft} 天` : `${daysLeft}d left`)}
         {daysLeft >= 0 && daysLeft <= 3 && ' ⚠'}
       </span>
     </span>
@@ -378,9 +389,11 @@ function SellByCell({
 
 /** Underlying flip price + distance from underlying_last; null flip = stable within ±40%. */
 function OptionFlipCell({ exit, action }: { exit?: OptionExitDynamic; action: OptionAction }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   if (!exit) return <span className="text-slate-600">—</span>
   if (exit.underlying_flip_price === null) {
-    return <span className="text-slate-500">±40% 内稳固</span>
+    return <span className="text-slate-500">{zh ? '±40% 内稳固' : 'stable within +/-40%'}</span>
   }
   const pct =
     exit.underlying_last !== null && exit.underlying_last > 0
@@ -401,10 +414,12 @@ function OptionHoldingsTable({
   positions: [string, OptionPaperPosition][]
   nowMs: number
 }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   if (positions.length === 0) {
     return (
       <div className="flex h-20 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-        暂无期权持仓——期权模拟盘开仓后自动显示
+        {zh ? '暂无期权持仓——期权模拟盘开仓后自动显示' : 'No option positions. Options paper positions appear here after entry.'}
       </div>
     )
   }
@@ -414,13 +429,13 @@ function OptionHoldingsTable({
         <thead>
           <tr className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
             {[
-              '标的',
-              '合约',
-              '买入日期',
-              '成本 → 现价',
-              '止盈止损进度',
-              '标的反转价',
-              '目标售出日期',
+              zh ? '标的' : 'Underlying',
+              zh ? '合约' : 'Contract',
+              zh ? '买入日期' : 'Entry time',
+              zh ? '成本 → 现价' : 'Cost -> Mark',
+              zh ? '止盈止损进度' : 'Stop/target progress',
+              zh ? '标的反转价' : 'Underlying flip',
+              zh ? '目标售出日期' : 'Target sell date',
             ].map((h) => (
               <th key={h} className="border-b border-white/10 px-2.5 py-1.5 text-left">
                 {h}
@@ -438,7 +453,7 @@ function OptionHoldingsTable({
               <tr
                 key={underlying}
                 className="border-b border-white/[0.03] font-mono text-xs transition hover:bg-white/[0.06]"
-                title={pos.exit_dynamic?.rules_note || OPTION_EXIT_RULES_TITLE}
+                title={pos.exit_dynamic?.rules_note || optionExitRulesTitle(zh)}
               >
                 <td className="px-2.5 py-2 font-bold text-slate-100">{underlying}</td>
                 <td className="px-2.5 py-2 text-slate-300">
@@ -482,6 +497,8 @@ function OptionHoldingsTable({
  * 集中展示所有持仓的动态退出参数；60s 自动刷新，倒计时每秒一跳。
  */
 export default function HoldingsGuide() {
+  const { lang, t } = useI18n()
+  const zh = lang === 'zh'
   const [sessions, setSessions] = useState<Record<string, PaperSession>>({})
   const [plans, setPlans] = useState<TradePlan[]>([])
   const [optPositions, setOptPositions] = useState<[string, OptionPaperPosition][]>([])
@@ -506,11 +523,11 @@ export default function HoldingsGuide() {
       },
       (e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e)
-        setOptError(msg.includes('failed:') ? msg : OPT_SERVICE_HINT)
+        setOptError(msg.includes('failed:') ? msg : t('options.serviceHint'))
       },
     )
     await Promise.all([stock, opt])
-  }, [])
+  }, [t])
 
   // 挂载拉一次 + 60s 自动刷新。
   useEffect(() => {
@@ -538,12 +555,12 @@ export default function HoldingsGuide() {
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="panel-title">
-          Holdings Exit Guide <span className="text-slate-500">· 持仓退出指引</span>
+          {zh ? 'Holdings Exit Guide' : 'Holdings Exit Guide'} <span className="text-slate-500">· {zh ? '持仓退出指引' : 'exit guide'}</span>
         </h2>
         <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-          {stockRows.length} 股票 · {optPositions.length} 期权
+          {stockRows.length} {zh ? '股票' : 'stocks'} · {optPositions.length} {zh ? '期权' : 'options'}
         </span>
-        <span className="ml-auto font-mono text-[10px] text-slate-500">60s 自动刷新</span>
+        <span className="ml-auto font-mono text-[10px] text-slate-500">{t('common.autoRefresh60')}</span>
       </div>
 
       {stockError && (
@@ -554,7 +571,7 @@ export default function HoldingsGuide() {
 
       {/* 股票持仓 */}
       <p className="mb-1.5 text-[10px] uppercase tracking-wider text-slate-500">
-        股票持仓 · Stock Holdings
+        {zh ? '股票持仓' : 'Stock Holdings'}
       </p>
       <StockHoldingsTable rows={stockRows} nowMs={nowMs} />
 
@@ -566,12 +583,14 @@ export default function HoldingsGuide() {
 
       {/* 期权持仓 */}
       <p className="mb-1.5 mt-4 text-[10px] uppercase tracking-wider text-slate-500">
-        期权持仓 · Option Holdings
+        {zh ? '期权持仓' : 'Option Holdings'}
       </p>
       <OptionHoldingsTable positions={optPositions} nowMs={nowMs} />
 
       <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-        所有退出参数均为动态量：反转价与目标区间随每日收盘数据重算，售出日期随到期日滚动，无需手工修改。
+        {zh
+          ? '所有退出参数均为动态量：反转价与目标区间随每日收盘数据重算，售出日期随到期日滚动，无需手工修改。'
+          : 'All exit parameters are dynamic: flip prices and target zones are recomputed after each close, and sell-by dates roll with expiration. No manual edits are needed.'}
       </p>
     </section>
   )

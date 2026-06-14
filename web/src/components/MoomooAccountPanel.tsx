@@ -8,6 +8,7 @@ import {
   type MoomooOrder,
   type MoomooPosition,
 } from '../api'
+import { useI18n } from '../i18n'
 
 const POLL_MS = 30_000
 
@@ -42,6 +43,7 @@ function FundCell({ label, value, cls }: { label: string; value: string; cls?: s
 
 /** 点击持仓行展开的买卖明细：日期/方向/成交数量/成交价。 */
 function OrderHistory({ code }: { code: string }) {
+  const { t } = useI18n()
   const [orders, setOrders] = useState<MoomooOrder[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,9 +58,9 @@ function OrderHistory({ code }: { code: string }) {
   }, [code])
 
   if (error) return <p className="px-3 py-2 text-xs text-neon-red">{error}</p>
-  if (!orders) return <p className="px-3 py-2 text-xs text-slate-500">loading orders…</p>
+  if (!orders) return <p className="px-3 py-2 text-xs text-slate-500">{t('common.loading')}</p>
   if (orders.length === 0)
-    return <p className="px-3 py-2 text-xs text-slate-600">该标的暂无历史订单</p>
+    return <p className="px-3 py-2 text-xs text-slate-600">{t('moomoo.noOrders')}</p>
 
   return (
     <ul className="space-y-1 px-2 py-2 font-mono text-xs">
@@ -87,7 +89,9 @@ function OrderHistory({ code }: { code: string }) {
               {o.side}
             </span>
             <span className="text-slate-300">
-              {filled ? `${fmtNum(o.dealt_qty, 0)} 股/张` : `${fmtNum(o.qty, 0)} 挂单`}
+              {filled
+                ? t('moomoo.sharesFilled', { value: fmtNum(o.dealt_qty, 0) })
+                : t('moomoo.orderQty', { value: fmtNum(o.qty, 0) })}
             </span>
             <span className="text-slate-300">
               @ {fmtNum(filled ? o.dealt_avg_price : o.price, 2)}
@@ -105,6 +109,7 @@ function OrderHistory({ code }: { code: string }) {
  * 点击行展开该标的历史买卖订单。数据来自 OpenD（/opt-api/account）。
  */
 export default function MoomooAccountPanel() {
+  const { t } = useI18n()
   const [account, setAccount] = useState<MoomooAccount | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -137,36 +142,36 @@ export default function MoomooAccountPanel() {
   return (
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="panel-title">moomoo 模拟账户</h2>
+        <h2 className="panel-title">{t('moomoo.title')}</h2>
         <span className="badge border border-neon-cyan/40 bg-neon-cyan/10 text-neon-cyan">
           SIMULATE · OpenD
         </span>
         {account && (
           <span className="ml-auto text-[10px] text-slate-600">
-            updated {new Date(account.updated_ms).toLocaleTimeString('en-GB')}
+            {t('common.updated', { time: new Date(account.updated_ms).toLocaleTimeString('en-GB') })}
           </span>
         )}
       </div>
 
       {error && (
         <p className="mb-2 rounded-lg border border-neon-red/40 bg-neon-red/10 px-3 py-2 text-xs text-neon-red">
-          无法连接 moomoo 账户（OpenD 是否在运行？）：{error}
+          {t('moomoo.connectError', { error })}
         </p>
       )}
 
       {account && (
         <>
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <FundCell label="total assets" value={`$${fmtNum(account.funds.total_assets, 0)}`} />
-            <FundCell label="cash" value={`$${fmtNum(account.funds.cash, 0)}`} />
-            <FundCell label="market value" value={`$${fmtNum(account.funds.market_val, 0)}`} />
-            <FundCell label="buying power" value={`$${fmtNum(account.funds.power, 0)}`} />
-            <FundCell label="total p/l" value={signed(plTotal, 0)} cls={pnlCls(plTotal)} />
-            <FundCell label="today's p/l ≈" value={signed(todayTotal, 0)} cls={pnlCls(todayTotal)} />
+            <FundCell label={t('moomoo.totalAssets')} value={`$${fmtNum(account.funds.total_assets, 0)}`} />
+            <FundCell label={t('moomoo.cash')} value={`$${fmtNum(account.funds.cash, 0)}`} />
+            <FundCell label={t('moomoo.marketValue')} value={`$${fmtNum(account.funds.market_val, 0)}`} />
+            <FundCell label={t('moomoo.buyingPower')} value={`$${fmtNum(account.funds.power, 0)}`} />
+            <FundCell label={t('moomoo.totalPL')} value={signed(plTotal, 0)} cls={pnlCls(plTotal)} />
+            <FundCell label={t('moomoo.todayPL')} value={signed(todayTotal, 0)} cls={pnlCls(todayTotal)} />
           </div>
 
           {positions.length === 0 && (
-            <p className="py-6 text-center text-xs text-slate-600">模拟账户暂无持仓</p>
+            <p className="py-6 text-center text-xs text-slate-600">{t('moomoo.emptyPositions')}</p>
           )}
 
           {positions.length > 0 && (
@@ -174,16 +179,16 @@ export default function MoomooAccountPanel() {
               <table className="w-full min-w-[760px] border-collapse font-mono text-xs">
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wider text-slate-500">
-                    <th className="px-2 py-1.5 text-left">symbol</th>
-                    <th className="px-2 py-1.5 text-right">qty</th>
-                    <th className="px-2 py-1.5 text-right">price</th>
-                    <th className="px-2 py-1.5 text-right">market val</th>
-                    <th className="px-2 py-1.5 text-right">p/l</th>
-                    <th className="px-2 py-1.5 text-right">p/l %</th>
-                    <th className="px-2 py-1.5 text-right" title="模拟环境无官方值，由昨收+当日成交近似">
-                      today's p/l ≈
+                    <th className="px-2 py-1.5 text-left">{t('moomoo.symbol')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('moomoo.qty')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('moomoo.price')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('moomoo.marketVal')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('moomoo.pl')}</th>
+                    <th className="px-2 py-1.5 text-right">{t('moomoo.plPct')}</th>
+                    <th className="px-2 py-1.5 text-right" title={t('moomoo.todayPLTitle')}>
+                      {t('moomoo.todayPL')}
                     </th>
-                    <th className="px-2 py-1.5 text-right">% of positions</th>
+                    <th className="px-2 py-1.5 text-right">{t('moomoo.positionPct')}</th>
                   </tr>
                 </thead>
                 <tbody>

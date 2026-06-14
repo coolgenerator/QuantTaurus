@@ -11,6 +11,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import { fetchKlines, fetchSymbolTaStats, fetchTa, fetchTaStats, fmtNum, toUnixSec, type DistStat, type Kline, type SymbolStatsResponse, type TaResponse, type TaRuleStat, type TaStatsResponse } from '../api'
+import { useI18n } from '../i18n'
 
 interface Props {
   symbol: string
@@ -152,6 +153,8 @@ function HistThumb({ hist, big = false }: { hist: number[]; big?: boolean }) {
 
 /** 总分布卡片：方向 n/胜率/期望/中位 + 大号直方图。 */
 function DistCard({ title, d, cls }: { title: string; d: DistStat; cls: string }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const e = d.avg10 * 100
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
@@ -161,10 +164,10 @@ function DistCard({ title, d, cls }: { title: string; d: DistStat; cls: string }
           E {e >= 0 ? '+' : ''}
           {e.toFixed(2)}%
           <span className="ml-2 text-xs font-medium text-slate-400">
-            胜率 {(d.win10 * 100).toFixed(1)}% · 中位 {(d.med10 * 100).toFixed(2)}%
+            {zh ? '胜率' : 'win'} {(d.win10 * 100).toFixed(1)}% · {zh ? '中位' : 'median'} {(d.med10 * 100).toFixed(2)}%
           </span>
         </p>
-        <p className="text-[10px] text-slate-500">n = {d.n.toLocaleString()}（10bar符号化收益）</p>
+        <p className="text-[10px] text-slate-500">n = {d.n.toLocaleString()} ({zh ? '10bar符号化收益' : '10-bar signed return'})</p>
       </div>
       <HistThumb hist={d.hist} big />
     </div>
@@ -188,10 +191,10 @@ function CurveThumb({ curve }: { curve: number[] }) {
   )
 }
 
-const TREND_LABEL: Record<number, { text: string; cls: string }> = {
-  1: { text: '多头趋势', cls: 'text-neon-green' },
-  [-1]: { text: '空头趋势', cls: 'text-neon-red' },
-  0: { text: '震荡', cls: 'text-slate-400' },
+const TREND_LABEL: Record<number, { key: 'bull' | 'bear' | 'range'; cls: string }> = {
+  1: { key: 'bull', cls: 'text-neon-green' },
+  [-1]: { key: 'bear', cls: 'text-neon-red' },
+  0: { key: 'range', cls: 'text-slate-400' },
 }
 
 function Chip({ label, value, cls }: { label: string; value: string; cls?: string }) {
@@ -203,6 +206,14 @@ function Chip({ label, value, cls }: { label: string; value: string; cls?: strin
 }
 
 export default function TechPanel({ symbol, interval }: Props) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
+  const trendText = (key: 'bull' | 'bear' | 'range') =>
+    key === 'bull'
+      ? zh ? '多头趋势' : 'Bull Trend'
+      : key === 'bear'
+        ? zh ? '空头趋势' : 'Bear Trend'
+        : zh ? '震荡' : 'Range'
   const mainRef = useRef<HTMLDivElement>(null)
   const macdRef = useRef<HTMLDivElement>(null)
   const rsiRef = useRef<HTMLDivElement>(null)
@@ -288,8 +299,8 @@ export default function TechPanel({ symbol, interval }: Props) {
     S.macdDea = macd.addLineSeries({ color: '#22d3ee', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
 
     S.rsi = rsi.addLineSeries({ color: '#c084fc', lineWidth: 2, priceLineVisible: false, lastValueVisible: false })
-    S.rsi.createPriceLine({ price: 70, color: 'rgba(251,113,133,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '超买' })
-    S.rsi.createPriceLine({ price: 30, color: 'rgba(52,211,153,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '超卖' })
+    S.rsi.createPriceLine({ price: 70, color: 'rgba(251,113,133,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: zh ? '超买' : 'overbought' })
+    S.rsi.createPriceLine({ price: 30, color: 'rgba(52,211,153,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: zh ? '超卖' : 'oversold' })
 
     S.kdjK = kdj.addLineSeries({ color: '#fbbf24', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     S.kdjD = kdj.addLineSeries({ color: '#22d3ee', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
@@ -319,7 +330,7 @@ export default function TechPanel({ symbol, interval }: Props) {
       tip.innerHTML =
         `<div style="color:#64748b;font-family:monospace;margin-bottom:2px">${date}</div>` +
         `<div style="font-family:monospace;line-height:1.5"><span style="color:#64748b">O</span> ${k.open.toFixed(2)} <span style="color:#64748b">H</span> ${k.high.toFixed(2)} <span style="color:#64748b">L</span> ${k.low.toFixed(2)} <span style="color:#64748b">C</span> <span style="color:${cc}">${k.close.toFixed(2)} (${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)</span></div>` +
-        `<div style="font-family:monospace;color:#94a3b8">Vol ${vol}${nSig ? ` · <span style=\"color:#fbbf24\">${nSig}个信号 → 右侧明细</span>` : ''}</div>`
+        `<div style="font-family:monospace;color:#94a3b8">Vol ${vol}${nSig ? ` · <span style=\"color:#fbbf24\">${nSig}${zh ? '个信号 → 右侧明细' : ' signals → detail panel'}</span>` : ''}</div>`
       tip.style.display = 'block'
       const x = Math.max(4, Math.min(param.point.x + 14, wrap.clientWidth - tip.offsetWidth - 8))
       const y = Math.max(4, param.point.y - tip.offsetHeight - 12)
@@ -349,7 +360,7 @@ export default function TechPanel({ symbol, interval }: Props) {
       chartsRef.current = []
       seriesRef.current = {}
     }
-  }, [])
+  }, [zh])
 
   // 最新闭包：左滑加载更早数据（翻倍直到上限）
   loadMoreRef.current = () => {
@@ -535,10 +546,10 @@ export default function TechPanel({ symbol, interval }: Props) {
     <section className="glass-card relative flex flex-col gap-2 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="panel-title">技术分析 · Technical Analysis</h2>
+          <h2 className="panel-title">{zh ? '技术分析' : 'Technical Analysis'}</h2>
           <p className="font-mono text-lg font-bold text-slate-100">
-            {symbol} <span className="text-sm font-medium text-slate-500">· {interval} · {days}d（左滑自动加载更早）</span>
-            {trendNow && <span className={`ml-3 text-sm font-bold ${trendNow.cls}`}>{trendNow.text}</span>}
+            {symbol} <span className="text-sm font-medium text-slate-500">· {interval} · {days}d ({zh ? '左滑自动加载更早' : 'scroll left to load earlier'})</span>
+            {trendNow && <span className={`ml-3 text-sm font-bold ${trendNow.cls}`}>{trendText(trendNow.key)}</span>}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -554,7 +565,7 @@ export default function TechPanel({ symbol, interval }: Props) {
               />
               <Chip
                 label="ADX14"
-                value={adxNow !== null ? `${fmtNum(adxNow, 1)} ${adxNow > 25 ? '强趋势' : '弱趋势'}` : '—'}
+                value={adxNow !== null ? `${fmtNum(adxNow, 1)} ${adxNow > 25 ? (zh ? '强趋势' : 'strong') : (zh ? '弱趋势' : 'weak')}` : '—'}
                 cls={adxNow !== null && adxNow > 25 ? 'text-amber-300' : undefined}
               />
             </>
@@ -562,9 +573,9 @@ export default function TechPanel({ symbol, interval }: Props) {
           <div className="flex overflow-hidden rounded-full border border-white/10 text-xs font-bold">
             {(
               [
-                ['lite', `精简 ${ta ? ta.classic_signals.filter((s) => s.strength >= 2).length : ''}`],
-                ['all', `全部 ${ta ? ta.classic_signals.length : ''}`],
-                ['off', '关'],
+                ['lite', `${zh ? '精简' : 'Lite'} ${ta ? ta.classic_signals.filter((s) => s.strength >= 2).length : ''}`],
+                ['all', `${zh ? '全部' : 'All'} ${ta ? ta.classic_signals.length : ''}`],
+                ['off', zh ? '关' : 'Off'],
               ] as [ClassicMode, string][]
             ).map(([mode, label]) => (
               <button
@@ -593,23 +604,22 @@ export default function TechPanel({ symbol, interval }: Props) {
           <button
             onClick={() => setShowChampion((v) => !v)}
             disabled={!!ta && !ta.champion}
-            title={ta && !ta.champion ? '该标的暂无冠军策略' : undefined}
+            title={ta && !ta.champion ? (zh ? '该标的暂无冠军策略' : 'No champion strategy for this symbol') : undefined}
             className={`rounded-full border px-3 py-1 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
               showChampion
                 ? 'border-neon-cyan/50 bg-neon-cyan/10 text-neon-cyan'
                 : 'border-white/10 text-slate-500 hover:text-slate-300'
             }`}
           >
-            ◉ 冠军信号 {ta?.champion ? ta.champion_signals.length : '无'}
+            ◉ {zh ? '冠军信号' : 'Champion signals'} {ta?.champion ? ta.champion_signals.length : (zh ? '无' : 'none')}
           </button>
         </div>
       </div>
 
       <p className="text-[11px] leading-snug text-slate-500">
-        ▲▼ 经典信号（36种规则·六大类，<span className="text-amber-400/80">未经回测验证仅供参考</span>）：
-        精简模式只画同日多规则共振的大箭头。<span className="text-slate-300">悬停K线浮层显示
-        OHLCV 基础行情，信号与统计明细在右侧 Bar 明细栏</span>。◉ 冠军 = evolve 闸门策略翻仓点。
-        主图绿/红轨道 = SuperTrend(10,3)，底部色带 = 均线趋势。
+        {zh
+          ? '▲▼ 经典信号来自 36 种规则和六大类，未经回测验证仅供参考。精简模式只画同日多规则共振的大箭头。悬停 K 线看 OHLCV；信号与统计明细在右侧 Bar 明细栏。◉ 冠军 = evolve 闸门策略翻仓点。主图绿/红轨道 = SuperTrend(10,3)，底部色带 = 均线趋势。'
+          : '▲▼ Classic signals come from 36 rules across six families and are references until backtested. Lite mode shows only same-day multi-rule confluence. Hover candles for OHLCV; signal and statistics details appear in the Bar Detail panel. ◉ Champion marks evolve gate flips. Green/red tracks are SuperTrend(10,3); the bottom band is MA trend.'}
       </p>
 
       <div className="flex gap-2">
@@ -624,15 +634,15 @@ export default function TechPanel({ symbol, interval }: Props) {
         {/* 技术明细侧栏：跟随十字线（未悬停时显示最新bar） */}
         <aside className="hidden h-[400px] w-72 shrink-0 overflow-y-auto rounded-lg border border-white/5 bg-white/5 p-3 lg:block">
           <p className="text-[10px] uppercase tracking-widest text-slate-500">
-            Bar 明细 {hoverTime === null && <span className="normal-case">（最新）</span>}
+            {zh ? 'Bar 明细' : 'Bar Detail'} {hoverTime === null && <span className="normal-case">({zh ? '最新' : 'latest'})</span>}
           </p>
           <p className="font-mono text-sm font-bold text-slate-200">{detailDate || '—'}</p>
 
           {ta && di !== undefined && (
             <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 font-mono text-[11px] text-slate-400">
               <span>
-                趋势{' '}
-                <span className={TREND_LABEL[ta.trend[di] ?? 0].cls}>{TREND_LABEL[ta.trend[di] ?? 0].text}</span>
+                {zh ? '趋势' : 'Trend'}{' '}
+                <span className={TREND_LABEL[ta.trend[di] ?? 0].cls}>{trendText(TREND_LABEL[ta.trend[di] ?? 0].key)}</span>
               </span>
               <span>
                 RSI <span className="text-slate-200">{fmtNum(dv(ta.rsi14), 1)}</span>
@@ -641,28 +651,28 @@ export default function TechPanel({ symbol, interval }: Props) {
                 ADX <span className="text-slate-200">{fmtNum(dv(ta.adx), 1)}</span>
               </span>
               <span>
-                MACD柱 <span className="text-slate-200">{fmtNum(dv(ta.macd_hist), 2)}</span>
+                {zh ? 'MACD柱' : 'MACD hist'} <span className="text-slate-200">{fmtNum(dv(ta.macd_hist), 2)}</span>
               </span>
               <span>
                 KDJ·K <span className="text-slate-200">{fmtNum(dv(ta.kdj_k), 1)}</span>
               </span>
               <span>
-                布林中轨 <span className="text-slate-200">{fmtNum(dv(ta.boll_mid))}</span>
+                {zh ? '布林中轨' : 'Boll mid'} <span className="text-slate-200">{fmtNum(dv(ta.boll_mid))}</span>
               </span>
             </div>
           )}
 
           <div className="mt-2 border-t border-white/10 pt-2">
             <p className="mb-1 text-[10px] uppercase tracking-widest text-slate-500">
-              信号 {detailSigs.length > 0 && `· ${detailSigs.length}`}
+              {zh ? '信号' : 'Signals'} {detailSigs.length > 0 && `· ${detailSigs.length}`}
             </p>
             {detailSigs.length === 0 ? (
-              <p className="text-[11px] text-slate-500">该 bar 无信号（悬停其他K线查看）</p>
+              <p className="text-[11px] text-slate-500">{zh ? '该 bar 无信号（悬停其他K线查看）' : 'No signal on this bar. Hover another candle.'}</p>
             ) : (
               detailSigs.map((s, si) => (
                 <div key={si} className="mb-2">
                   <p className={`text-xs font-bold ${s.side === 'buy' ? 'text-neon-green' : 'text-neon-red'}`}>
-                    {s.layer === 'champion' ? '◉ 冠军' : s.side === 'buy' ? '▲ 买入' : '▼ 卖出'}{' '}
+                    {s.layer === 'champion' ? `◉ ${zh ? '冠军' : 'Champion'}` : s.side === 'buy' ? `▲ ${zh ? '买入' : 'Buy'}` : `▼ ${zh ? '卖出' : 'Sell'}`}{' '}
                     <span className="font-mono font-medium text-slate-400">@{s.price.toFixed(2)}</span>
                   </p>
                   {s.rules.map((r) => {
@@ -673,13 +683,13 @@ export default function TechPanel({ symbol, interval }: Props) {
                         <p className="text-slate-200">{r}</p>
                         {st && (
                           <p className="text-slate-500">
-                            全体 胜{(st.win10 * 100).toFixed(0)}% · E{st.avg10 >= 0 ? '+' : ''}
-                            {(st.avg10 * 100).toFixed(1)}% · 止盈~{st.exp_tp_day.toFixed(0)}bar (n={st.n})
+                            {zh ? '全体' : 'Universe'} {zh ? '胜' : 'win'}{(st.win10 * 100).toFixed(0)}% · E{st.avg10 >= 0 ? '+' : ''}
+                            {(st.avg10 * 100).toFixed(1)}% · {zh ? '止盈' : 'TP'}~{st.exp_tp_day.toFixed(0)}bar (n={st.n})
                           </p>
                         )}
                         {sy && (
                           <p className="text-slate-500">
-                            本标的 胜{(sy.win10 * 100).toFixed(0)}% · E{sy.avg10 >= 0 ? '+' : ''}
+                            {zh ? '本标的' : 'This symbol'} {zh ? '胜' : 'win'}{(sy.win10 * 100).toFixed(0)}% · E{sy.avg10 >= 0 ? '+' : ''}
                             {(sy.avg10 * 100).toFixed(1)}% (n={sy.n})
                           </p>
                         )}
@@ -711,18 +721,18 @@ export default function TechPanel({ symbol, interval }: Props) {
       <div className="mt-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] uppercase tracking-widest text-slate-500">
-            规则统计 · Rule Stats{' '}
+            {zh ? '规则统计' : 'Rule Stats'}{' '}
             {stats && (
               <span className="normal-case tracking-normal">
-                （{stats.symbols}标的 · {(stats.events / 1000).toFixed(1)}k 事件 · {stats.interval}）
+                ({stats.symbols} {zh ? '标的' : 'symbols'} · {(stats.events / 1000).toFixed(1)}k {zh ? '事件' : 'events'} · {stats.interval})
               </span>
             )}
           </p>
           <div className="flex overflow-hidden rounded-full border border-white/10 text-xs font-bold">
             {(
               [
-                ['uni', '全宇宙'],
-                ['sym', `当前标的 ${symbol}`],
+                ['uni', zh ? '全宇宙' : 'Universe'],
+                ['sym', zh ? `当前标的 ${symbol}` : `Current ${symbol}`],
               ] as ['uni' | 'sym', string][]
             ).map(([sc, label]) => (
               <button
@@ -738,19 +748,14 @@ export default function TechPanel({ symbol, interval }: Props) {
           </div>
         </div>
         <p className="mb-1 text-[11px] leading-snug text-slate-500">
-          口径：信号后10根bar的符号化收益（卖出信号=做空视角，跌了才算赢）；止盈 =
-          20根bar内收益峰值出现位置的均值；直方图 = 10bar收益分布（红≤0 / 绿&gt;0，±2.5%分箱）。
-          统计窗口随周期变化{stats ? `（当前 ${stats.interval} · ${stats.window_days}天 · ${stats.symbols}标的）` : ''}，
-          盘中粒度受数据源限制（1m≈7天、5m/30m≈60天、1h≈2年），样本少时仅供参考。
-          <span className="text-amber-400/80">
-            同一规则在不同个股上期望差异巨大（如九买：PLTR +7.7% vs COIN -0.9%），
-            全体均值仅是先验，请结合"当前标的"档查看；样本跨标的同期相关且窗口重叠，仅供参考。
-          </span>
+          {zh
+            ? `口径：信号后10根bar的符号化收益（卖出信号=做空视角，跌了才算赢）；止盈 = 20根bar内收益峰值出现位置的均值；直方图 = 10bar收益分布（红≤0 / 绿>0，±2.5%分箱）。统计窗口随周期变化${stats ? `（当前 ${stats.interval} · ${stats.window_days}天 · ${stats.symbols}标的）` : ''}，盘中粒度受数据源限制，样本少时仅供参考。同一规则在不同个股上期望差异巨大，全体均值仅是先验。`
+            : `Method: signed return over 10 bars after the signal. Sell signals are evaluated from the short side. TP day is the average location of the best return in the next 20 bars. Histogram shows the 10-bar return distribution. Stats window follows interval${stats ? ` (current ${stats.interval}, ${stats.window_days} days, ${stats.symbols} symbols)` : ''}. Intraday history is vendor-limited; small samples are reference only. Rule expectancy can vary sharply by symbol, so universe averages are priors.`}
         </p>
         {statsErr ? (
-          <p className="py-3 text-center text-xs text-amber-400/80">该周期暂无统计：{statsErr}</p>
+          <p className="py-3 text-center text-xs text-amber-400/80">{zh ? '该周期暂无统计' : 'No stats for this interval'}: {statsErr}</p>
         ) : !stats ? (
-          <p className="py-3 text-center text-xs text-slate-500">统计计算中（每周期首次约10秒）…</p>
+          <p className="py-3 text-center text-xs text-slate-500">{zh ? '统计计算中（每周期首次约10秒）...' : 'Computing stats. First run per interval takes about 10s...'}</p>
         ) : (
           <>
             {/* 总概率分布卡片：全宇宙或当前标的的买/卖两方向 */}
@@ -759,22 +764,22 @@ export default function TechPanel({ symbol, interval }: Props) {
                 if (statScope === 'sym' && symStatsErr)
                   return (
                     <p className="col-span-full py-2 text-center text-xs text-amber-400/80">
-                      {symbol} 该周期暂无统计：{symStatsErr}
+                      {symbol} {zh ? '该周期暂无统计' : 'has no stats for this interval'}: {symStatsErr}
                     </p>
                   )
                 if (statScope === 'sym' && !symStats)
                   return (
                     <p className="col-span-full py-2 text-center text-xs text-slate-500">
-                      {symbol} 专属统计计算中…
+                      {zh ? `${symbol} 专属统计计算中...` : `Computing ${symbol} stats...`}
                     </p>
                   )
                 const buy = statScope === 'sym' ? symStats!.total_buy : stats.total_buy
                 const sell = statScope === 'sym' ? symStats!.total_sell : stats.total_sell
-                const tag = statScope === 'sym' ? `${symbol}（${symStats!.n_bars}根bar）` : '全宇宙'
+                const tag = statScope === 'sym' ? (zh ? `${symbol}（${symStats!.n_bars}根bar）` : `${symbol} (${symStats!.n_bars} bars)`) : (zh ? '全宇宙' : 'Universe')
                 return (
                   <>
-                    <DistCard title={`▲ ${tag} · 全部买入信号总分布`} d={buy} cls="text-neon-green" />
-                    <DistCard title={`▼ ${tag} · 全部卖出信号总分布（做空视角）`} d={sell} cls="text-neon-red" />
+                    <DistCard title={`▲ ${tag} · ${zh ? '全部买入信号总分布' : 'all buy signals'}`} d={buy} cls="text-neon-green" />
+                    <DistCard title={`▼ ${tag} · ${zh ? '全部卖出信号总分布（做空视角）' : 'all sell signals, short-side view'}`} d={sell} cls="text-neon-red" />
                   </>
                 )
               })()}
@@ -784,13 +789,13 @@ export default function TechPanel({ symbol, interval }: Props) {
               <table className="w-full text-right text-[11px] tabular-nums">
                 <thead className="sticky top-0 bg-panel/95 text-slate-500 backdrop-blur">
                   <tr>
-                    <th className="px-2 py-1.5 text-left font-medium">规则</th>
+                    <th className="px-2 py-1.5 text-left font-medium">{zh ? '规则' : 'Rule'}</th>
                     <th className="px-2 py-1.5 font-medium">n</th>
-                    <th className="px-2 py-1.5 font-medium">胜率</th>
+                    <th className="px-2 py-1.5 font-medium">{zh ? '胜率' : 'Win'}</th>
                     <th className="px-2 py-1.5 font-medium">E·10d</th>
-                    <th className="px-2 py-1.5 font-medium">止盈日</th>
-                    <th className="px-2 py-1.5 text-center font-medium">10d分布</th>
-                    <th className="px-2 py-1.5 text-center font-medium">期望路径</th>
+                    <th className="px-2 py-1.5 font-medium">{zh ? '止盈日' : 'TP day'}</th>
+                    <th className="px-2 py-1.5 text-center font-medium">{zh ? '10d分布' : '10d dist'}</th>
+                    <th className="px-2 py-1.5 text-center font-medium">{zh ? '期望路径' : 'expected path'}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -825,7 +830,7 @@ export default function TechPanel({ symbol, interval }: Props) {
                 </tbody>
               </table>
               {statScope === 'sym' && symStats && symStats.rules.length === 0 && (
-                <p className="py-3 text-center text-xs text-slate-500">该标的该周期无 n≥3 的规则样本</p>
+                <p className="py-3 text-center text-xs text-slate-500">{zh ? '该标的该周期无 n≥3 的规则样本' : 'No rule sample with n>=3 for this symbol and interval'}</p>
               )}
             </div>
           </>
@@ -839,7 +844,7 @@ export default function TechPanel({ symbol, interval }: Props) {
       )}
       {error && (
         <div className="rounded-lg border border-neon-red/40 bg-neon-red/10 px-3 py-2 text-xs text-neon-red">
-          {error}（提示：数据不足 300 根K线时此页不可用，可换标的或周期）
+          {error} ({zh ? '提示：数据不足 300 根K线时此页不可用，可换标的或周期' : 'Hint: this page needs at least 300 candles; try another symbol or interval'})
         </div>
       )}
     </section>

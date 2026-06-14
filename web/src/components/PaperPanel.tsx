@@ -16,6 +16,7 @@ import {
   type PaperSession,
   type PaperTrade,
 } from '../api'
+import { useI18n } from '../i18n'
 import { useWsMessages } from '../ws'
 
 const MAX_TRADES = 50
@@ -59,6 +60,7 @@ function PositionBadge({ position }: { position: number }) {
 }
 
 export default function PaperPanel() {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null)
@@ -244,7 +246,7 @@ export default function PaperPanel() {
   return (
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="panel-title">Live Paper Trading</h2>
+        <h2 className="panel-title">{t('paper.title')}</h2>
         {active && (
           <span className="badge border border-neon-green/40 bg-neon-green/10 text-neon-green">
             <span className="inline-block h-2 w-2 animate-pulse-dot rounded-full bg-neon-green" />
@@ -269,7 +271,7 @@ export default function PaperPanel() {
       {!active && (
         <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
           <span className="text-2xl">♟</span>
-          <p>冠军席位空缺——进化晋升后自动开盘</p>
+          <p>{t('paper.empty')}</p>
         </div>
       )}
 
@@ -316,7 +318,7 @@ export default function PaperPanel() {
         <>
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-xl border border-white/5 bg-black/20 p-3">
-              <p className="text-[10px] uppercase tracking-widest text-slate-500">equity</p>
+              <p className="text-[10px] uppercase tracking-widest text-slate-500">{t('paper.equity')}</p>
               <p className={`font-mono text-2xl font-bold ${equityCls}`}>
                 {fmtNum(stats.equity, 4)}
               </p>
@@ -326,21 +328,21 @@ export default function PaperPanel() {
               </p>
             </div>
             <div className="rounded-xl border border-white/5 bg-black/20 p-3">
-              <p className="mb-1 text-[10px] uppercase tracking-widest text-slate-500">position</p>
+              <p className="mb-1 text-[10px] uppercase tracking-widest text-slate-500">{t('paper.position')}</p>
               <PositionBadge position={stats.position} />
             </div>
             <div className="rounded-xl border border-white/5 bg-black/20 p-3">
-              <p className="text-[10px] uppercase tracking-widest text-slate-500">mark price</p>
+              <p className="text-[10px] uppercase tracking-widest text-slate-500">{t('paper.markPrice')}</p>
               <p className="font-mono text-2xl font-bold text-slate-200">
                 {fmtNum(stats.price, stats.price >= 1000 ? 1 : 3)}
               </p>
             </div>
             <div
               className="rounded-xl border border-white/5 bg-black/20 p-3"
-              title="等效股数 = 仓位比例 × $10k 槽位名义资金 ÷ 现价；与 moomoo 模拟账户实际下单股数同口径"
+              title={t('paper.equivSharesTitle')}
             >
               <p className="text-[10px] uppercase tracking-widest text-slate-500">
-                等效持仓 · shares
+                {t('paper.equivShares')}
               </p>
               {Number.isFinite(session.shares_equiv) ? (
                 <>
@@ -354,14 +356,14 @@ export default function PaperPanel() {
                     }`}
                   >
                     {session.shares_equiv > 0 ? '+' : ''}
-                    {session.shares_equiv.toFixed(1)} 股
+                    {session.shares_equiv.toFixed(1)} {t('common.shares')}
                   </p>
                   <p className="font-mono text-xs text-slate-500">
                     ≈$
                     {Math.abs(session.notional_usd ?? 0).toLocaleString('en-US', {
                       maximumFractionDigits: 0,
                     })}{' '}
-                    名义
+                    {t('common.notional')}
                   </p>
                 </>
               ) : (
@@ -374,12 +376,12 @@ export default function PaperPanel() {
 
           <div className="mt-3">
             <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-              rebalances · {trades.length}
+              {t('paper.rebalances', { n: trades.length })}
             </p>
             <div className="max-h-36 overflow-y-auto pr-1">
               {trades.length === 0 && (
                 <p className="py-6 text-center text-xs text-slate-600">
-                  no rebalances yet — the champion is patient
+                  {t('paper.noRebalances')}
                 </p>
               )}
               <ul className="space-y-1 font-mono text-xs">

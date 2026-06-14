@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { fetchPortfolio, fmtNum, fmtPct, type PortfolioReport, type PortfolioSlot, slotLabel} from '../api'
+import { useI18n } from '../i18n'
 
 /** Signed weight color: long green / short red / flat slate. */
 function weightTone(w: number): string {
@@ -71,6 +72,7 @@ function SlotRow({ slot, maxAbs }: { slot: PortfolioSlot; maxAbs: number }) {
 }
 
 export default function PortfolioPanel() {
+  const { t } = useI18n()
   const [report, setReport] = useState<PortfolioReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -105,11 +107,11 @@ export default function PortfolioPanel() {
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex items-center gap-2">
         <h2 className="panel-title">
-          Portfolio <span className="text-slate-500">· 当日仓位规划 · 组合风控</span>
+          {t('portfolio.title')} <span className="text-slate-500">· {t('portfolio.subtitle')}</span>
         </h2>
         {report && (
           <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-            {report.slots.length} 槽位
+            {t('common.slots', { n: report.slots.length })}
           </span>
         )}
         <button
@@ -117,7 +119,7 @@ export default function PortfolioPanel() {
           disabled={loading}
           className="ml-auto rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? '刷新中…' : '↻ 刷新'}
+          {loading ? t('common.refreshing') : `↻ ${t('common.refresh')}`}
         </button>
       </div>
 
@@ -129,7 +131,7 @@ export default function PortfolioPanel() {
 
       {!report && !error && (
         <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          组合数据加载中…
+          {t('portfolio.loading')}
         </div>
       )}
 
@@ -138,35 +140,40 @@ export default function PortfolioPanel() {
           {/* 顶部 4 个大数字卡 */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
-              label="组合总杠杆 Gross"
+              label={t('portfolio.gross')}
               value={`${fmtNum(report.gross_adjusted, 2)}×`}
               valueCls={
                 report.gross_adjusted > report.gross_cap ? 'text-neon-red' : 'text-slate-100'
               }
-              sub={`上限 ${fmtNum(report.gross_cap, 2)}×`}
+              sub={t('portfolio.cap', { value: fmtNum(report.gross_cap, 2) })}
             />
             <StatCard
-              label="净敞口 Net"
+              label={t('portfolio.net')}
               value={fmtPct(report.net_adjusted, 1)}
               valueCls={weightTone(report.net_adjusted)}
-              sub={report.net_adjusted >= 0 ? '净多头' : '净空头'}
+              sub={report.net_adjusted >= 0 ? t('portfolio.netLong') : t('portfolio.netShort')}
             />
             <StatCard
-              label="估计组合年化波动"
+              label={t('portfolio.estVol')}
               value={fmtPct(report.est_vol_annual_adjusted, 1)}
               valueCls={
                 report.est_vol_annual_adjusted > report.vol_target_annual
                   ? 'text-amber-400'
                   : 'text-neon-cyan'
               }
-              sub={`目标 ${fmtPct(report.vol_target_annual, 1)} · 缩放前 ${fmtPct(report.est_vol_annual_raw, 1)}`}
+              sub={t('portfolio.volSub', {
+                target: fmtPct(report.vol_target_annual, 1),
+                raw: fmtPct(report.est_vol_annual_raw, 1),
+              })}
             />
             <StatCard
-              label="风控缩放系数 Scale"
+              label={t('portfolio.scale')}
               value={`×${fmtNum(report.scale, 2)}`}
               valueCls={scaleTriggered ? 'text-amber-400' : 'text-neon-green'}
               sub={
-                scaleTriggered ? `已缩减至 ${(report.scale * 100).toFixed(0)}%` : '未触发'
+                scaleTriggered
+                  ? t('portfolio.scaledTo', { value: (report.scale * 100).toFixed(0) })
+                  : t('portfolio.notTriggered')
               }
               subCls={scaleTriggered ? 'text-amber-400/80' : 'text-neon-green/80'}
             />
@@ -177,11 +184,11 @@ export default function PortfolioPanel() {
             <table className="w-full border-collapse">
               <thead>
                 <tr className="bg-white/5 text-[11px] text-slate-400">
-                  <th className="px-2 py-2 text-left font-semibold">槽位</th>
-                  <th className="px-2 py-2 text-right font-semibold">原始信号仓位（槽内）</th>
-                  <th className="px-2 py-2 text-right font-semibold">组合权重</th>
+                  <th className="px-2 py-2 text-left font-semibold">{t('portfolio.slot')}</th>
+                  <th className="px-2 py-2 text-right font-semibold">{t('portfolio.rawPosition')}</th>
+                  <th className="px-2 py-2 text-right font-semibold">{t('portfolio.rawWeight')}</th>
                   <th className="px-2 py-2 text-right font-semibold text-slate-200">
-                    当日规划权重
+                    {t('portfolio.plannedWeight')}
                   </th>
                   <th className="px-2 py-2" />
                 </tr>
@@ -199,9 +206,7 @@ export default function PortfolioPanel() {
             <p className="text-[11px] leading-relaxed text-slate-400">
               {report.note}
               {report.note && ' '}
-              各策略槽位仓位是槽内独立口径（每槽分配 1/N
-              资金），直接相加会超过100%是口径错觉；本面板的组合权重才是真实资金占比。假设槽位间相关系数{' '}
-              {fmtNum(report.assumed_correlation, 2)}。
+              {t('portfolio.note', { corr: fmtNum(report.assumed_correlation, 2) })}
             </p>
           </div>
         </>

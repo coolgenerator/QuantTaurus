@@ -8,9 +8,7 @@ import {
   type OptionPlansResponse,
   type OptionsPaperStatus,
 } from '../api'
-
-const SERVICE_HINT =
-  '期权服务未运行：python3 bridge/options_service.py（需 OpenD 已登录）'
+import { useI18n } from '../i18n'
 
 // ---------- small helpers ----------
 
@@ -38,9 +36,6 @@ function fmtDateTime(ms: number): string {
 }
 
 // ---------- option trade plans ----------
-
-const PLAN_FOOTNOTE =
-  '计划由股票冠军信号推导：方向→Call/Put，持有期×1.5→到期日，|Δ|≈0.35→行权价。期权可归零，权利金即最大亏损。'
 
 const ACTION_BADGE: Record<OptionPlan['action'], string> = {
   'BUY CALL':
@@ -76,6 +71,7 @@ function OptionPlanCard({
   champion?: SignalChampion
   onNavigateStrategies?: () => void
 }) {
+  const { t } = useI18n()
   const [showRationale, setShowRationale] = useState(false)
   const contractCost = plan.premium * 100
   const isPut = plan.action === 'BUY PUT'
@@ -92,9 +88,12 @@ function OptionPlanCard({
         </span>
         <span
           className={`badge ml-auto font-mono ${confBadgeCls(plan.stock_confidence)}`}
-          title={`股票信号置信度 ${Math.round(plan.stock_confidence)} · 目标价 ${fmtNum(plan.stock_target)}`}
+          title={t('optionPlans.stockConfidenceTitle', {
+            confidence: Math.round(plan.stock_confidence),
+            target: fmtNum(plan.stock_target),
+          })}
         >
-          信心 {Math.round(plan.stock_confidence)}
+          {t('optionPlans.confidence', { value: Math.round(plan.stock_confidence) })}
         </span>
       </div>
 
@@ -110,18 +109,18 @@ function OptionPlanCard({
           {plan.dte} DTE
         </span>
         <span className="font-mono text-xs text-slate-300">
-          权利金 <span className="font-bold text-slate-100">{fmtUsd(plan.premium)}</span>/股
-          <span className="text-slate-500">（一张 {fmtUsd(contractCost, 0)}）</span>
+          {t('optionPlans.premium')} <span className="font-bold text-slate-100">{fmtUsd(plan.premium)}</span>{t('optionPlans.perShare')}
+          <span className="text-slate-500"> ({t('optionPlans.oneContract', { value: fmtUsd(contractCost, 0) })})</span>
         </span>
       </div>
       <div className="mt-1.5 font-mono text-xs">
         {plan.qty_suggested > 0 ? (
           <span className="text-slate-300">
-            建议张数 <span className="font-bold text-neon-green">{plan.qty_suggested} 张</span>
+            {t('optionPlans.qtySuggested')} <span className="font-bold text-neon-green">{t('optionPlans.contracts', { n: plan.qty_suggested })}</span>
           </span>
         ) : (
           <span className="rounded bg-amber-400/10 px-1.5 py-0.5 text-amber-300">
-            单张超预算，仅作参考
+            {t('optionPlans.overBudget')}
           </span>
         )}
       </div>
@@ -141,7 +140,7 @@ function OptionPlanCard({
         <span>
           OI <span className="text-slate-200">{fmtInt(plan.open_interest)}</span>
         </span>
-        <span className="ml-auto text-slate-500">spot {fmtNum(plan.spot)}</span>
+        <span className="ml-auto text-slate-500">{t('optionPlans.spot', { value: fmtNum(plan.spot) })}</span>
       </div>
 
       {/* 信号策略联动：跳转到「策略」Tab 查看冠军档案 */}
@@ -149,21 +148,21 @@ function OptionPlanCard({
         <button
           onClick={onNavigateStrategies}
           className="mt-2 block w-full text-left font-mono text-[11px] text-slate-500 transition hover:text-neon-cyan"
-          title="点击查看策略档案"
+          title={t('common.viewStrategyProfile')}
         >
-          信号策略: <span className="font-bold text-neon-purple">{champion.kind}</span>
-          <span className="text-slate-600">（{champion.key} 冠军）</span> ↗
+          {t('common.signalStrategy')}: <span className="font-bold text-neon-purple">{champion.kind}</span>
+          <span className="text-slate-600"> ({t('common.champion', { key: champion.key })})</span> ↗
         </button>
       )}
 
       {/* 买入 / 卖出规则 */}
       <div className="mt-3 rounded-lg border border-white/5 bg-white/[0.03] p-2.5">
         <p className="text-[11px] leading-relaxed text-slate-300">
-          <span className="mr-1.5 font-bold text-neon-green">买入</span>
+          <span className="mr-1.5 font-bold text-neon-green">{t('optionPlans.entry')}</span>
           {plan.entry_rule}
         </p>
         <div className="mt-1.5 border-t border-white/5 pt-1.5">
-          <p className="mb-0.5 text-[11px] font-bold text-neon-red">卖出</p>
+          <p className="mb-0.5 text-[11px] font-bold text-neon-red">{t('optionPlans.exit')}</p>
           <ul className="space-y-0.5">
             {plan.exit_rules.map((rule, i) => (
               <li key={i} className="text-[11px] leading-relaxed text-slate-300">
@@ -182,7 +181,7 @@ function OptionPlanCard({
             onClick={() => setShowRationale((v) => !v)}
             className="font-mono text-[11px] text-slate-400 transition hover:text-neon-cyan"
           >
-            决策依据 {showRationale ? '▴' : '▾'}
+            {t('optionPlans.rationale')} {showRationale ? '▴' : '▾'}
           </button>
           {showRationale && (
             <div className="mt-1 border-l-2 border-neon-cyan/70 bg-neon-cyan/5 py-1.5 pl-2.5 pr-2">
@@ -202,6 +201,7 @@ export function OptionPlansSection({
 }: {
   onNavigateStrategies?: () => void
 }) {
+  const { t } = useI18n()
   const [data, setData] = useState<OptionPlansResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -214,11 +214,11 @@ export function OptionPlansSection({
       setError(null)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setError(msg.includes('failed:') ? msg : SERVICE_HINT)
+      setError(msg.includes('failed:') ? msg : t('options.serviceHint'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     void load()
@@ -250,14 +250,14 @@ export function OptionPlansSection({
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="panel-title">
-          Option Plans <span className="text-slate-500">· 期权交易计划</span>
+          {t('optionPlans.title')} <span className="text-slate-500">· {t('optionPlans.subtitle')}</span>
         </h2>
         <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-          {plans.length} 计划
+          {t('common.planCount', { n: plans.length })}
         </span>
         {data && (
           <span className="ml-auto font-mono text-[10px] text-slate-500">
-            更新于 {fmtDateTime(data.as_of)}
+            {t('common.updatedAt', { time: fmtDateTime(data.as_of) })}
           </span>
         )}
       </div>
@@ -265,7 +265,7 @@ export function OptionPlansSection({
       {loading && !data && (
         <div className="flex h-32 items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
           <span className="h-2 w-2 animate-pulse rounded-full bg-neon-cyan" />
-          首次生成需逐个拉取期权链，约 1~2 分钟（之后缓存 120s）…
+          {t('optionPlans.loading')}
         </div>
       )}
 
@@ -277,7 +277,7 @@ export function OptionPlansSection({
 
       {!loading && !error && plans.length === 0 && (
         <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          暂无期权计划——股票冠军信号就绪后将自动推导
+          {t('optionPlans.empty')}
         </div>
       )}
 
@@ -294,7 +294,7 @@ export function OptionPlansSection({
         </div>
       )}
 
-      <p className="mt-3 text-[11px] leading-relaxed text-slate-500">{PLAN_FOOTNOTE}</p>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500">{t('optionPlans.footnote')}</p>
     </section>
   )
 }
@@ -316,6 +316,7 @@ function fmtContractCode(code: string): string {
 }
 
 export function OptionsPaperSection() {
+  const { t } = useI18n()
   const [status, setStatus] = useState<OptionsPaperStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -325,9 +326,9 @@ export function OptionsPaperSection() {
       setError(null)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setError(msg.includes('failed:') ? msg : SERVICE_HINT)
+      setError(msg.includes('failed:') ? msg : t('options.serviceHint'))
     }
-  }, [])
+  }, [t])
 
   // 挂载拉一次 + 60s 自动刷新。
   useEffect(() => {
@@ -351,14 +352,14 @@ export function OptionsPaperSection() {
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="panel-title">
-          Options Paper <span className="text-slate-500">· 期权模拟盘</span>
+          {t('optionsPaper.title')} <span className="text-slate-500">· {t('optionsPaper.subtitle')}</span>
         </h2>
         <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-          初始 $10,000
+          {t('optionsPaper.initial')}
         </span>
         {status && (
           <span className="ml-auto font-mono text-[10px] text-slate-500">
-            更新于 {fmtDateTime(status.updated_ms)} · 60s 自动刷新
+            {t('common.updatedAt', { time: fmtDateTime(status.updated_ms) })} · {t('common.autoRefresh60')}
           </span>
         )}
       </div>
@@ -379,25 +380,25 @@ export function OptionsPaperSection() {
               {pnlPct.toFixed(2)}%
             </span>
           </p>
-          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">账户净值</p>
+          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">{t('optionsPaper.equity')}</p>
         </div>
         <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2.5">
           <p className="font-mono text-xl font-bold leading-tight text-slate-200">
             {fmtUsd(status?.cash)}
           </p>
-          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">现金</p>
+          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">{t('optionsPaper.cash')}</p>
         </div>
         <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2.5">
           <p className="font-mono text-xl font-bold leading-tight text-neon-cyan">
             {positions.length}
           </p>
-          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">持仓数</p>
+          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">{t('optionsPaper.positions')}</p>
         </div>
       </div>
 
       {idle && !error && (
         <div className="mt-3 flex h-24 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          等待信号开仓（每5分钟自动检查）
+          {t('optionsPaper.idle')}
         </div>
       )}
 
@@ -407,7 +408,13 @@ export function OptionsPaperSection() {
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
-                {['标的', '合约', '张数', '成本 → 现价', '到期'].map((h) => (
+                {[
+                  t('optionsPaper.underlying'),
+                  t('optionsPaper.contract'),
+                  t('optionsPaper.qty'),
+                  t('optionsPaper.costMark'),
+                  t('optionsPaper.expiry'),
+                ].map((h) => (
                   <th key={h} className="border-b border-white/10 px-2.5 py-1.5 text-left">
                     {h}
                   </th>
@@ -457,7 +464,7 @@ export function OptionsPaperSection() {
       {trades.length > 0 && (
         <div className="mt-3">
           <p className="mb-1.5 text-[10px] uppercase tracking-wider text-slate-500">
-            交易记录（最近 {trades.length} 条）
+            {t('optionsPaper.trades', { n: trades.length })}
           </p>
           <div className="max-h-[260px] space-y-1 overflow-y-auto pr-1">
             {trades.map((t, i) => (

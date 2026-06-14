@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { fetchTradePlans, fmtNum, type TradePlan, slotLabel} from '../api'
+import { useI18n } from '../i18n'
 
 type Direction = 'long' | 'short' | 'flat'
 
@@ -8,27 +9,31 @@ function directionOf(plan: TradePlan): Direction {
   return plan.target_position > 0 ? 'long' : 'short'
 }
 
-const DIR_BADGE: Record<Direction, { label: string; cls: string }> = {
+const DIR_BADGE: Record<Direction, { labelKey: string; cls: string }> = {
   long: {
-    label: '看涨 LONG',
+    labelKey: 'trade.long',
     cls: 'border border-neon-cyan/50 bg-neon-cyan/10 text-neon-cyan drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]',
   },
   short: {
-    label: '看跌 SHORT',
+    labelKey: 'trade.short',
     cls: 'border border-neon-red/50 bg-gradient-to-r from-rose-500/15 to-violet-500/15 text-neon-red drop-shadow-[0_0_8px_rgba(251,113,133,0.5)]',
   },
-  flat: { label: '观望 FLAT', cls: 'border border-white/15 bg-white/5 text-slate-400' },
+  flat: { labelKey: 'trade.flat', cls: 'border border-white/15 bg-white/5 text-slate-400' },
 }
 
 /** Countdown to next_decision_ms, e.g. "2h 31m 08s 后（今日美股收盘）". */
-function fmtCountdown(targetMs: number, nowMs: number): string {
+function fmtCountdown(
+  targetMs: number,
+  nowMs: number,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string {
   const remain = targetMs - nowMs
-  if (!targetMs || remain <= 0) return '待数据刷新'
+  if (!targetMs || remain <= 0) return t('trade.waitRefresh')
   const sec = Math.floor(remain / 1000)
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
-  return `${h}h ${m}m ${String(s).padStart(2, '0')}s 后（今日美股收盘）`
+  return t('trade.countdown', { time: `${h}h ${m}m ${String(s).padStart(2, '0')}s` })
 }
 
 /** Signed percent, e.g. "-10.7%". */
@@ -36,31 +41,45 @@ function fmtSignedPct(v: number): string {
   return `${v > 0 ? '+' : ''}${v.toFixed(1)}%`
 }
 
-function FlipLine({ plan, dir }: { plan: TradePlan; dir: Direction }) {
+function FlipLine({
+  plan,
+  dir,
+  t,
+}: {
+  plan: TradePlan
+  dir: Direction
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
   if (plan.flip_price === null) {
-    return <span className="text-slate-500">±40% 内信号稳固</span>
+    return <span className="text-slate-500">{t('trade.stable')}</span>
   }
   const pct = plan.flip_pct !== null ? ` (${fmtSignedPct(plan.flip_pct)})` : ''
   // 多头：跌破反转价 → 信号翻空（红）；空头：升破 → 翻多（绿）。
   if (dir === 'short') {
     return (
       <span className="text-neon-green">
-        升破 {fmtNum(plan.flip_price)} 信号反转{pct}
+        {t('trade.flipUp', { price: fmtNum(plan.flip_price), pct })}
       </span>
     )
   }
   return (
     <span className="text-neon-red">
-      跌破 {fmtNum(plan.flip_price)} 信号反转{pct}
+      {t('trade.flipDown', { price: fmtNum(plan.flip_price), pct })}
     </span>
   )
 }
 
 /** 盘中再决策行：以最新价作临时收盘的正式试算，模拟盘每30分钟按此调仓。 */
-function IntradayLine({ plan }: { plan: TradePlan }) {
-  const t = plan.intraday_target ?? 0
-  const drift = Math.abs(t - plan.target_position)
-  const tone = t > 0.05 ? 'text-neon-green' : t < -0.05 ? 'text-neon-red' : 'text-slate-400'
+function IntradayLine({
+  plan,
+  t,
+}: {
+  plan: TradePlan
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
+  const intradayTarget = plan.intraday_target ?? 0
+  const drift = Math.abs(intradayTarget - plan.target_position)
+  const tone = intradayTarget > 0.05 ? 'text-neon-green' : intradayTarget < -0.05 ? 'text-neon-red' : 'text-slate-400'
   const asOf =
     plan.intraday_as_of !== null
       ? new Date(plan.intraday_as_of).toLocaleTimeString('zh-CN', {
@@ -71,15 +90,15 @@ function IntradayLine({ plan }: { plan: TradePlan }) {
   return (
     <div
       className="mt-2 rounded-lg border border-neon-purple/30 bg-neon-purple/5 px-2.5 py-1.5 font-mono text-[11px] text-slate-300"
-      title="盘中每30分钟用最新价作临时收盘正式重算信号；目标变化≥10%时模拟盘即时调仓"
+      title={t('trade.intradayTooltip')}
     >
-      盘中再决策 <span className="text-slate-500">{asOf}</span> · 现价{' '}
-      <span className="font-bold text-slate-200">{fmtNum(plan.intraday_price)}</span> → 目标{' '}
-      <span className={`font-bold ${tone}`}>{Math.round(t * 100)}%</span>
+      {t('trade.intradayTitle')} <span className="text-slate-500">{asOf}</span> · {t('trade.lastPrice')}{' '}
+      <span className="font-bold text-slate-200">{fmtNum(plan.intraday_price)}</span> → {t('trade.target')}{' '}
+      <span className={`font-bold ${tone}`}>{Math.round(intradayTarget * 100)}%</span>
       {drift >= 0.1 ? (
-        <span className="ml-1 font-bold text-amber-400">⚠ 与收盘计划不同</span>
+        <span className="ml-1 font-bold text-amber-400">{t('trade.diffClose')}</span>
       ) : (
-        <span className="ml-1 text-slate-500">与收盘计划一致</span>
+        <span className="ml-1 text-slate-500">{t('trade.sameClose')}</span>
       )}
     </div>
   )
@@ -95,7 +114,13 @@ function confidenceTone(confidence: number): { text: string; bar: string } {
 }
 
 /** ±1σ·√N target zone bar with a marker at the current price. */
-function TargetZone({ plan }: { plan: TradePlan }) {
+function TargetZone({
+  plan,
+  t,
+}: {
+  plan: TradePlan
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
   if (plan.target_zone_low === null || plan.target_zone_high === null) return null
   const lo = plan.target_zone_low
   const hi = plan.target_zone_high
@@ -106,7 +131,7 @@ function TargetZone({ plan }: { plan: TradePlan }) {
     <div className="mt-3">
       <div className="flex items-center justify-between font-mono text-[11px]">
         <span className="text-neon-red">{fmtNum(lo)}</span>
-        <span className="text-slate-500">统计目标区间</span>
+        <span className="text-slate-500">{t('trade.targetZone')}</span>
         <span className="text-neon-green">{fmtNum(hi)}</span>
       </div>
       <div className="relative mt-1 h-2 rounded-full bg-gradient-to-r from-rose-500/40 via-white/10 to-emerald-500/40">
@@ -114,11 +139,11 @@ function TargetZone({ plan }: { plan: TradePlan }) {
         <span
           className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-ink bg-neon-cyan shadow-[0_0_8px_rgba(34,211,238,0.9)]"
           style={{ left: `${(pos * 100).toFixed(1)}%` }}
-          title={`现价 ${fmtNum(plan.last_close)}`}
+          title={t('trade.currentPrice', { price: fmtNum(plan.last_close) })}
         />
       </div>
       <p className="mt-1 text-right font-mono text-[10px] text-slate-500">
-        ±1σ·√{Math.round(plan.horizon_days)}日 区间（每日收盘更新）
+        {t('trade.zoneHint', { days: Math.round(plan.horizon_days) })}
       </p>
     </div>
   )
@@ -128,10 +153,12 @@ function PlanCard({
   plan,
   nowMs,
   onNavigateStrategies,
+  t,
 }: {
   plan: TradePlan
   nowMs: number
   onNavigateStrategies?: () => void
+  t: (key: string, vars?: Record<string, string | number>) => string
 }) {
   const dir = directionOf(plan)
   const badge = DIR_BADGE[dir]
@@ -160,7 +187,7 @@ function PlanCard({
         <button
           onClick={onNavigateStrategies}
           className="badge border border-white/10 bg-white/5 font-mono font-medium text-slate-400 transition hover:border-neon-cyan/50 hover:text-neon-cyan"
-          title={`信号策略: ${plan.strategy}（${slotLabel(plan.key)} 冠军）· 点击查看策略档案`}
+          title={`${t('common.signalStrategy')}: ${plan.strategy} (${t('common.champion', { key: slotLabel(plan.key) })}) · ${t('common.viewStrategyProfile')}`}
         >
           {plan.interval} · {plan.strategy}
         </button>
@@ -171,7 +198,7 @@ function PlanCard({
         >
           {cadenceShort}
         </span>
-        <span className={`badge ml-auto px-3 py-1 text-sm ${badge.cls}`}>{badge.label}</span>
+        <span className={`badge ml-auto px-3 py-1 text-sm ${badge.cls}`}>{t(badge.labelKey)}</span>
       </div>
 
       {/* 信念强度条 */}
@@ -183,13 +210,13 @@ function PlanCard({
           />
         </div>
         <span className="font-mono text-xs font-bold text-slate-300">
-          {Math.round(conviction * 100)}% 仓位
+          {t('trade.position', { value: Math.round(conviction * 100) })}
         </span>
       </div>
 
       {/* 置信度：横条 + 数字 + 留出窗 sharpe 依据 */}
       <div className="mt-2 flex items-center gap-2">
-        <span className="shrink-0 text-[11px] text-slate-500">置信度</span>
+        <span className="shrink-0 text-[11px] text-slate-500">{t('common.confidence')}</span>
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
           <div
             className={`h-full rounded-full transition-all duration-500 ${confTone.bar}`}
@@ -201,7 +228,7 @@ function PlanCard({
         </span>
       </div>
       <p className="mt-1 font-mono text-[10px] text-slate-500">
-        依据: 留出窗 Sharpe {sharpe === null ? '—' : sharpe.toFixed(2)}
+        {t('trade.basis', { value: sharpe === null ? '—' : sharpe.toFixed(2) })}
       </p>
 
       {/* 决策依据：霓虹青竖线 + 等宽小字 */}
@@ -212,27 +239,27 @@ function PlanCard({
       )}
 
       {/* 统计目标区间：±1σ·√N日 */}
-      <TargetZone plan={plan} />
+      <TargetZone plan={plan} t={t} />
 
       {/* 关键价位 */}
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs">
         <span className="text-slate-400">
-          现价 <span className="font-bold text-slate-200">{fmtNum(plan.last_close)}</span>
+          {t('trade.lastPrice')} <span className="font-bold text-slate-200">{fmtNum(plan.last_close)}</span>
         </span>
         <span className="text-slate-700">·</span>
-        <FlipLine plan={plan} dir={dir} />
+        <FlipLine plan={plan} dir={dir} t={t} />
       </div>
 
       {/* 盘中再决策：每30分钟以最新价作临时收盘正式重算，模拟盘按此调仓 */}
       {plan.intraday_target !== null && plan.intraday_target !== undefined && (
-        <IntradayLine plan={plan} />
+        <IntradayLine plan={plan} t={t} />
       )}
 
       {/* 下一决策倒计时 */}
       <div className="mt-2 font-mono text-xs text-slate-400">
-        下一决策{' '}
+        {t('trade.nextDecision')}{' '}
         <span className="font-bold text-neon-purple">
-          {fmtCountdown(plan.next_decision_ms, nowMs)}
+          {fmtCountdown(plan.next_decision_ms, nowMs, t)}
         </span>
       </div>
 
@@ -240,10 +267,10 @@ function PlanCard({
       <button
         onClick={onNavigateStrategies}
         className="mt-2 block w-full text-left font-mono text-[11px] text-slate-500 transition hover:text-neon-cyan"
-        title="点击查看策略档案"
+        title={t('common.viewStrategyProfile')}
       >
-        信号策略: <span className="font-bold text-neon-purple">{plan.strategy}</span>
-        <span className="text-slate-600">（{slotLabel(plan.key)} 冠军）</span> ↗
+        {t('common.signalStrategy')}: <span className="font-bold text-neon-purple">{plan.strategy}</span>
+        <span className="text-slate-600"> ({t('common.champion', { key: slotLabel(plan.key) })})</span> ↗
       </button>
     </div>
   )
@@ -254,6 +281,7 @@ export default function TradePlanPanel({
 }: {
   onNavigateStrategies?: () => void
 }) {
+  const { t } = useI18n()
   const [plans, setPlans] = useState<TradePlan[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -292,17 +320,17 @@ export default function TradePlanPanel({
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex items-center gap-2">
         <h2 className="panel-title">
-          Trade Plans <span className="text-slate-500">· 交易计划</span>
+          {t('trade.title')} <span className="text-slate-500">· {t('trade.subtitle')}</span>
         </h2>
         <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-          {plans.length} 计划
+          {t('common.planCount', { n: plans.length })}
         </span>
         <button
           onClick={refresh}
           disabled={loading}
           className="ml-auto rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? '刷新中…' : '↻ 刷新'}
+          {loading ? t('common.refreshing') : `↻ ${t('common.refresh')}`}
         </button>
       </div>
 
@@ -314,7 +342,7 @@ export default function TradePlanPanel({
 
       {plans.length === 0 && !error && (
         <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          暂无交易计划——冠军策略就绪后将自动生成
+          {t('trade.empty')}
         </div>
       )}
 
@@ -326,15 +354,14 @@ export default function TradePlanPanel({
               plan={p}
               nowMs={nowMs}
               onNavigateStrategies={onNavigateStrategies}
+              t={t}
             />
           ))}
         </div>
       )}
 
       <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-        动量类策略无固定目标价/止损价：仓位随波动率连续调整，方向持有至信号反转。反转价位 =
-        若今日收盘到达该价，策略方向翻转的数学临界点，可作止损/反手参考。期权隐含目标区间见期权分析
-        Tab 的 ATM IV。
+        {t('trade.footnote')}
       </p>
     </section>
   )

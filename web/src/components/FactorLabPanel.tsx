@@ -24,6 +24,7 @@ import {
   type MineReportFactor,
   type MineStatus,
 } from '../api'
+import { useI18n } from '../i18n'
 
 // ---------- small helpers ----------
 
@@ -34,16 +35,16 @@ function fmtDate(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-function fmtDateTime(ms: number): string {
+function fmtDateTime(ms: number, locale = 'zh-CN'): string {
   if (!ms) return '—'
-  return new Date(ms).toLocaleString('zh-CN', { hour12: false })
+  return new Date(ms).toLocaleString(locale, { hour12: false })
 }
 
-function fmtElapsed(ms: number): string {
+function fmtElapsed(ms: number, zh: boolean): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   const m = Math.floor(s / 60)
   const sec = s % 60
-  return m > 0 ? `${m} 分 ${sec} 秒` : `${sec} 秒`
+  return m > 0 ? (zh ? `${m} 分 ${sec} 秒` : `${m}m ${sec}s`) : (zh ? `${sec} 秒` : `${sec}s`)
 }
 
 /** IC values are small (±0.1); show 3 decimals with sign. */
@@ -150,21 +151,21 @@ const HORIZON_OPTIONS = [5, 10, 21]
 
 interface AdvField {
   key: 'days' | keyof MineConfig
-  label: string
+  labelZh: string
+  labelEn: string
   step: string
-  placeholder: string
 }
 
 const ADV_FIELDS: AdvField[] = [
-  { key: 'days', label: '数据天数 days', step: '1', placeholder: '后端默认' },
-  { key: 'max_depth', label: '表达式深度 max_depth', step: '1', placeholder: '后端默认' },
-  { key: 'folds', label: '交叉验证折数 folds', step: '1', placeholder: '后端默认' },
-  { key: 'holdout_frac', label: '留出比例 holdout_frac', step: '0.05', placeholder: '后端默认' },
-  { key: 'stability_lambda', label: '稳定性惩罚 λ_stability', step: '0.1', placeholder: '后端默认' },
-  { key: 'complexity_lambda', label: '复杂度惩罚 λ_complexity', step: '0.01', placeholder: '后端默认' },
-  { key: 'redundancy_lambda', label: '冗余惩罚 λ_redundancy', step: '0.1', placeholder: '后端默认' },
-  { key: 'top_k', label: '入库上限 top_k', step: '1', placeholder: '后端默认' },
-  { key: 'holdout_ic_floor', label: '留出IC门槛 ic_floor', step: '0.005', placeholder: '后端默认' },
+  { key: 'days', labelZh: '数据天数 days', labelEn: 'Data days', step: '1' },
+  { key: 'max_depth', labelZh: '表达式深度 max_depth', labelEn: 'Expression depth', step: '1' },
+  { key: 'folds', labelZh: '交叉验证折数 folds', labelEn: 'CV folds', step: '1' },
+  { key: 'holdout_frac', labelZh: '留出比例 holdout_frac', labelEn: 'Holdout fraction', step: '0.05' },
+  { key: 'stability_lambda', labelZh: '稳定性惩罚 λ_stability', labelEn: 'Stability penalty', step: '0.1' },
+  { key: 'complexity_lambda', labelZh: '复杂度惩罚 λ_complexity', labelEn: 'Complexity penalty', step: '0.01' },
+  { key: 'redundancy_lambda', labelZh: '冗余惩罚 λ_redundancy', labelEn: 'Redundancy penalty', step: '0.1' },
+  { key: 'top_k', labelZh: '入库上限 top_k', labelEn: 'Library cap', step: '1' },
+  { key: 'holdout_ic_floor', labelZh: '留出IC门槛 ic_floor', labelEn: 'Holdout IC floor', step: '0.005' },
 ]
 
 const CONFIG_KEYS: (keyof MineConfig)[] = [
@@ -187,6 +188,8 @@ function parseNum(s: string): number | undefined {
 
 /** 单个挖掘出的因子卡：表达式 + IC 体检指标 + 留出验收徽章。 */
 function MinedFactorCard({ f }: { f: MineReportFactor }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   return (
     <div
       className={`rounded-xl border bg-black/20 p-3 transition hover:bg-white/5 ${
@@ -199,11 +202,11 @@ function MinedFactorCard({ f }: { f: MineReportFactor }) {
         </code>
         {f.passed_holdout ? (
           <span className="badge shrink-0 border border-neon-green/40 bg-neon-green/10 text-neon-green">
-            ✓ 通过留出
+            {zh ? '✓ 通过留出' : '✓ holdout pass'}
           </span>
         ) : (
           <span className="badge shrink-0 border border-neon-red/40 bg-neon-red/10 text-neon-red">
-            ✗ 未通过
+            {zh ? '✗ 未通过' : '✗ failed'}
           </span>
         )}
       </div>
@@ -211,7 +214,7 @@ function MinedFactorCard({ f }: { f: MineReportFactor }) {
       {/* 核心指标 chips */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
         <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-slate-300">
-          搜索IC <b className={f.mean_ic >= 0 ? 'text-neon-green' : 'text-neon-red'}>{fmtIc(f.mean_ic)}</b>
+          {zh ? '搜索IC' : 'search IC'} <b className={f.mean_ic >= 0 ? 'text-neon-green' : 'text-neon-red'}>{fmtIc(f.mean_ic)}</b>
         </span>
         <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-slate-300">
           ICIR <b className={f.icir >= 0 ? 'text-neon-green' : 'text-neon-red'}>{fmtNum(f.icir)}</b>
@@ -223,10 +226,10 @@ function MinedFactorCard({ f }: { f: MineReportFactor }) {
               : 'border-neon-red/40 bg-neon-red/10 text-neon-red'
           }`}
         >
-          留出IC <b>{fmtIc(f.holdout_ic)}</b>
+          {zh ? '留出IC' : 'holdout IC'} <b>{fmtIc(f.holdout_ic)}</b>
         </span>
         <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-slate-400">
-          复杂度 {f.complexity}
+          {zh ? '复杂度' : 'complexity'} {f.complexity}
         </span>
         <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-slate-400">
           fitness {fmtNum(f.fitness, 3)}
@@ -239,7 +242,7 @@ function MinedFactorCard({ f }: { f: MineReportFactor }) {
           {f.fold_ics.map((ic, i) => (
             <span
               key={i}
-              title={`第 ${i + 1} 折 IC`}
+              title={zh ? `第 ${i + 1} 折 IC` : `fold ${i + 1} IC`}
               className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${
                 ic >= 0
                   ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
@@ -256,23 +259,25 @@ function MinedFactorCard({ f }: { f: MineReportFactor }) {
 }
 
 function MineReportView({ report }: { report: MineReport }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   return (
     <div className="mt-3 flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] text-slate-500">
-        <span className="badge border border-neon-green/40 bg-neon-green/10 text-neon-green">本轮挖掘完成</span>
-        <span>共评估 {report.total_evaluated} 个候选因子</span>
+        <span className="badge border border-neon-green/40 bg-neon-green/10 text-neon-green">{zh ? '本轮挖掘完成' : 'Mining run complete'}</span>
+        <span>{zh ? '共评估' : 'Evaluated'} {report.total_evaluated} {zh ? '个候选因子' : 'candidate factors'}</span>
         <span>
-          搜索期 {fmtDate(report.search_dates[0])} ~ {fmtDate(report.search_dates[1])}
+          {zh ? '搜索期' : 'search'} {fmtDate(report.search_dates[0])} ~ {fmtDate(report.search_dates[1])}
         </span>
         <span>
-          留出期 {fmtDate(report.holdout_dates[0])} ~ {fmtDate(report.holdout_dates[1])}
+          {zh ? '留出期' : 'holdout'} {fmtDate(report.holdout_dates[0])} ~ {fmtDate(report.holdout_dates[1])}
         </span>
       </div>
 
       {/* 进化曲线 */}
       <div>
         <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-          evolution curve · 每代最优 fitness
+          {zh ? 'evolution curve · 每代最优 fitness' : 'evolution curve · best fitness per generation'}
         </p>
         <EvolutionCurve values={report.generations_best} />
       </div>
@@ -280,10 +285,10 @@ function MineReportView({ report }: { report: MineReport }) {
       {/* 本轮发现的因子 */}
       <div>
         <p className="mb-1.5 text-[10px] uppercase tracking-wider text-slate-500">
-          本轮发现的因子 · {report.factors.length} 个
+          {zh ? '本轮发现的因子' : 'Discovered factors'} · {report.factors.length}
         </p>
         {report.factors.length === 0 ? (
-          <p className="text-xs text-slate-500">本轮未发现合格因子，可调大 population/generations 再试。</p>
+          <p className="text-xs text-slate-500">{zh ? '本轮未发现合格因子，可调大 population/generations 再试。' : 'No accepted factor found. Try larger population or generations.'}</p>
         ) : (
           <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
             {report.factors.map((f, i) => (
@@ -297,6 +302,8 @@ function MineReportView({ report }: { report: MineReport }) {
 }
 
 function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const [horizon, setHorizon] = useState(10)
   const [seed, setSeed] = useState('42')
   const [population, setPopulation] = useState('200')
@@ -367,7 +374,7 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
       setStatus({ status: 'running', started_ms: Date.now() })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setError(msg.includes('400') ? '已有一个挖掘任务在运行，同时只能跑一个。' : msg)
+      setError(msg.includes('400') ? (zh ? '已有一个挖掘任务在运行，同时只能跑一个。' : 'A mining job is already running; only one can run at a time.') : msg)
       void refreshStatus()
     }
   }, [running, horizon, seed, population, generations, adv, refreshStatus])
@@ -376,7 +383,7 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
 
   return (
     <section className="glass-card flex flex-col p-4">
-      <BlockHeader index="①" title="Mining Console" sub="挖掘控制台">
+      <BlockHeader index="①" title="Mining Console" sub={zh ? '挖掘控制台' : 'mining controls'}>
         {status && (
           <span
             className={`badge ml-auto font-mono ${
@@ -399,7 +406,7 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
       {/* 参数表单 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">预测窗口 horizon</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">{zh ? '预测窗口 horizon' : 'Forecast horizon'}</span>
           <select
             className="select-dark"
             value={horizon}
@@ -408,13 +415,13 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
           >
             {HORIZON_OPTIONS.map((h) => (
               <option key={h} value={h}>
-                {h} 天
+                {zh ? `${h} 天` : `${h}d`}
               </option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">随机种子 seed</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">{zh ? '随机种子 seed' : 'Random seed'}</span>
           <input
             className="input-dark"
             type="number"
@@ -424,7 +431,7 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">种群规模 population</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">{zh ? '种群规模 population' : 'Population'}</span>
           <input
             className="input-dark"
             type="number"
@@ -434,7 +441,7 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">进化代数 generations</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">{zh ? '进化代数 generations' : 'Generations'}</span>
           <input
             className="input-dark"
             type="number"
@@ -450,18 +457,18 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
         className="mt-2 self-start font-mono text-[11px] text-slate-500 transition hover:text-neon-cyan"
         onClick={() => setAdvOpen((v) => !v)}
       >
-        {advOpen ? '▴ 收起高级参数' : '▾ 高级参数（留空 = 后端默认）'}
+        {advOpen ? (zh ? '▴ 收起高级参数' : '▴ Collapse advanced') : (zh ? '▾ 高级参数（留空 = 后端默认）' : '▾ Advanced parameters, blank = backend default')}
       </button>
       {advOpen && (
         <div className="mt-2 grid grid-cols-2 gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3 sm:grid-cols-3 lg:grid-cols-5">
           {ADV_FIELDS.map((f) => (
             <label key={f.key} className="flex flex-col gap-1">
-              <span className="text-[10px] tracking-wider text-slate-500">{f.label}</span>
+              <span className="text-[10px] tracking-wider text-slate-500">{zh ? f.labelZh : f.labelEn}</span>
               <input
                 className="input-dark py-1 text-xs"
                 type="number"
                 step={f.step}
-                placeholder={f.placeholder}
+                placeholder={zh ? '后端默认' : 'backend default'}
                 value={adv[f.key] ?? ''}
                 onChange={(e) => setAdv((prev) => ({ ...prev, [f.key]: e.target.value }))}
                 disabled={running}
@@ -474,24 +481,24 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
       {/* 开始按钮 / 运行状态 */}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button className="btn-neon" onClick={() => void start()} disabled={running}>
-          {running ? '挖掘中…' : '⛏ 开始挖掘'}
+          {running ? (zh ? '挖掘中...' : 'Mining...') : `⛏ ${zh ? '开始挖掘' : 'Start Mining'}`}
         </button>
         {running && (
           <div className="flex items-center gap-2 rounded-xl border border-neon-cyan/30 bg-neon-cyan/5 px-3 py-1.5">
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-neon-cyan border-t-transparent" />
             <span className="font-mono text-xs text-neon-cyan">
-              遗传规划进化中 · 已运行 {fmtElapsed(elapsed)}
+              {zh ? '遗传规划进化中 · 已运行' : 'Genetic programming running · elapsed'} {fmtElapsed(elapsed, zh)}
             </span>
           </div>
         )}
         {status?.status === 'idle' && (
-          <span className="text-xs text-slate-500">尚未运行过挖掘，设置参数后点「开始挖掘」。</span>
+          <span className="text-xs text-slate-500">{zh ? '尚未运行过挖掘，设置参数后点「开始挖掘」。' : 'No mining run yet. Set parameters and start mining.'}</span>
         )}
       </div>
 
       {status?.status === 'failed' && status.error && (
         <p className="mt-3 rounded-lg border border-neon-red/40 bg-neon-red/10 px-3 py-2 text-xs text-neon-red">
-          挖掘失败：{status.error}
+          {zh ? '挖掘失败' : 'Mining failed'}: {status.error}
         </p>
       )}
 
@@ -503,6 +510,8 @@ function MiningConsole({ onMineDone }: { onMineDone: () => void }) {
 // ---------- ② factor library ----------
 
 function FactorLibrary({ refreshKey }: { refreshKey: number }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const [factors, setFactors] = useState<MinedFactor[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -524,18 +533,18 @@ function FactorLibrary({ refreshKey }: { refreshKey: number }) {
 
   return (
     <section className="glass-card flex flex-col p-4">
-      <BlockHeader index="②" title="Factor Library" sub="因子库">
+      <BlockHeader index="②" title="Factor Library" sub={zh ? '因子库' : 'factor library'}>
         <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-          {factors?.length ?? 0} 因子
+          {factors?.length ?? 0} {zh ? '因子' : 'factors'}
         </span>
-        <span className="ml-auto font-mono text-[10px] text-slate-500">仅收录通过留出验收的因子</span>
+        <span className="ml-auto font-mono text-[10px] text-slate-500">{zh ? '仅收录通过留出验收的因子' : 'Only factors that pass holdout are stored'}</span>
       </BlockHeader>
 
       {error && <ErrorBox msg={error} />}
 
       {factors !== null && factors.length === 0 && !error && (
         <div className="flex h-24 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          因子库为空——先在上方挖掘控制台跑一轮挖掘
+          {zh ? '因子库为空——先在上方挖掘控制台跑一轮挖掘' : 'Factor library is empty. Run mining above first.'}
         </div>
       )}
 
@@ -544,13 +553,13 @@ function FactorLibrary({ refreshKey }: { refreshKey: number }) {
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-white/10 text-[10px] uppercase tracking-wider text-slate-500">
-                <th className="py-2 pr-3 font-medium">表达式</th>
+                <th className="py-2 pr-3 font-medium">{zh ? '表达式' : 'Expression'}</th>
                 <th className="py-2 pr-3 font-medium">horizon</th>
-                <th className="py-2 pr-3 text-right font-medium">搜索IC</th>
+                <th className="py-2 pr-3 text-right font-medium">{zh ? '搜索IC' : 'Search IC'}</th>
                 <th className="py-2 pr-3 text-right font-medium">ICIR</th>
-                <th className="py-2 pr-3 text-right font-medium">留出IC</th>
-                <th className="py-2 pr-3 text-right font-medium">复杂度</th>
-                <th className="py-2 text-right font-medium">入库时间</th>
+                <th className="py-2 pr-3 text-right font-medium">{zh ? '留出IC' : 'Holdout IC'}</th>
+                <th className="py-2 pr-3 text-right font-medium">{zh ? '复杂度' : 'Complexity'}</th>
+                <th className="py-2 text-right font-medium">{zh ? '入库时间' : 'Mined'}</th>
               </tr>
             </thead>
             <tbody>
@@ -608,6 +617,8 @@ function PeriodCard({
   m: BacktestMetrics
   highlight?: boolean
 }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   return (
     <div
       className={`rounded-xl border p-3 ${
@@ -623,20 +634,20 @@ function PeriodCard({
         <span className="font-mono text-[10px] text-slate-500">{sub}</span>
         {highlight && (
           <span className="badge border border-neon-green/50 bg-neon-green/10 text-[10px] text-neon-green">
-            从未参与挖掘
+            {zh ? '从未参与挖掘' : 'never used for mining'}
           </span>
         )}
       </div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-2">
         <PeriodMetric label="Sharpe" value={fmtNum(m.sharpe)} tone={m.sharpe >= 0 ? 'pos' : 'neg'} />
         <PeriodMetric
-          label="年化收益"
+          label={zh ? '年化收益' : 'Annual Return'}
           value={fmtPct(m.annual_return)}
           tone={m.annual_return >= 0 ? 'pos' : 'neg'}
         />
-        <PeriodMetric label="最大回撤" value={fmtPct(m.max_drawdown)} tone="neg" />
+        <PeriodMetric label={zh ? '最大回撤' : 'Max Drawdown'} value={fmtPct(m.max_drawdown)} tone="neg" />
         <PeriodMetric
-          label="命中率"
+          label={zh ? '命中率' : 'Hit Rate'}
           value={fmtPct(m.hit_rate, 1)}
           tone={m.hit_rate >= 0.5 ? 'pos' : 'neg'}
         />
@@ -709,6 +720,8 @@ function CompositeEquityChart({ result }: { result: FactorStrategyResult }) {
 }
 
 function CompositeSection() {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<FactorStrategyResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -727,9 +740,9 @@ function CompositeSection() {
 
   return (
     <section className="glass-card flex flex-col p-4">
-      <BlockHeader index="③" title="Composite Strategy" sub="组合策略验证">
+      <BlockHeader index="③" title="Composite Strategy" sub={zh ? '组合策略验证' : 'composite validation'}>
         <button className="btn-neon ml-auto px-4 py-1.5 text-xs" onClick={() => void run()} disabled={running}>
-          {running ? '回测中…' : '▶ 跑组合回测'}
+          {running ? (zh ? '回测中...' : 'Backtesting...') : `▶ ${zh ? '跑组合回测' : 'Run Composite Backtest'}`}
         </button>
       </BlockHeader>
 
@@ -737,7 +750,9 @@ function CompositeSection() {
 
       {!result && !error && (
         <p className="text-xs text-slate-500">
-          用整个因子库等权合成截面多空组合，对比搜索期 / 留出期 / 全期表现，检验是否过拟合。
+          {zh
+            ? '用整个因子库等权合成截面多空组合，对比搜索期 / 留出期 / 全期表现，检验是否过拟合。'
+            : 'Build an equal-weight cross-sectional long/short portfolio from the full factor library and compare search, holdout, and full-sample performance.'}
         </p>
       )}
 
@@ -746,24 +761,24 @@ function CompositeSection() {
           {/* 因子与组合概况 */}
           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[10px] text-slate-500">
             <span>
-              使用因子 <b className="text-slate-300">{result.factors_used.length}</b> 个
+              {zh ? '使用因子' : 'factors'} <b className="text-slate-300">{result.factors_used.length}</b>
             </span>
             <span>
-              平均换手 <b className="text-slate-300">{fmtPct(result.avg_turnover, 1)}</b>
+              {zh ? '平均换手' : 'avg turnover'} <b className="text-slate-300">{fmtPct(result.avg_turnover, 1)}</b>
             </span>
             <span>
-              单边持仓 <b className="text-slate-300">{result.names_per_side}</b> 只
+              {zh ? '单边持仓' : 'names per side'} <b className="text-slate-300">{result.names_per_side}</b>
             </span>
             <span>
-              留出期自 <b className="text-neon-green">{fmtDate(result.holdout_start_ms)}</b> 起
+              {zh ? '留出期自' : 'holdout starts'} <b className="text-neon-green">{fmtDate(result.holdout_start_ms)}</b>
             </span>
           </div>
 
           {/* 三段指标对比 */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <PeriodCard title="搜索期" sub="In-Search" m={result.metrics_search} />
-            <PeriodCard title="留出期" sub="Holdout" m={result.metrics_holdout} highlight />
-            <PeriodCard title="全期" sub="Full Sample" m={result.metrics_full} />
+            <PeriodCard title={zh ? '搜索期' : 'In-Search'} sub="In-Search" m={result.metrics_search} />
+            <PeriodCard title={zh ? '留出期' : 'Holdout'} sub="Holdout" m={result.metrics_holdout} highlight />
+            <PeriodCard title={zh ? '全期' : 'Full Sample'} sub="Full Sample" m={result.metrics_full} />
           </div>
 
           {/* 净值曲线 */}
@@ -825,6 +840,8 @@ function ScoreRow({
 }
 
 function ForecastSection() {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const [forecast, setForecast] = useState<FactorForecast | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -856,14 +873,14 @@ function ForecastSection() {
 
   return (
     <section className="glass-card flex flex-col p-4">
-      <BlockHeader index="④" title="Forecast" sub="预测">
+      <BlockHeader index="④" title="Forecast" sub={zh ? '预测' : 'forecast'}>
         {forecast && (
           <>
             <span className="badge border border-white/10 bg-white/5 font-mono text-slate-500">
-              as of {fmtDateTime(forecast.as_of)}
+              as of {fmtDateTime(forecast.as_of, zh ? 'zh-CN' : 'en-US')}
             </span>
             <span className="badge border border-neon-purple/40 bg-neon-purple/10 font-mono text-neon-purple">
-              {forecast.horizon_days} 天展望
+              {zh ? `${forecast.horizon_days} 天展望` : `${forecast.horizon_days}d horizon`}
             </span>
           </>
         )}
@@ -872,7 +889,7 @@ function ForecastSection() {
           disabled={loading}
           className="ml-auto rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? '刷新中…' : '↻ 刷新预测'}
+          {loading ? (zh ? '刷新中...' : 'Refreshing...') : `↻ ${zh ? '刷新预测' : 'Refresh Forecast'}`}
         </button>
       </BlockHeader>
 
@@ -882,7 +899,7 @@ function ForecastSection() {
 
       {forecast && forecast.rankings.length === 0 && (
         <div className="flex h-24 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          暂无预测——因子库为空时无法打分，请先挖掘因子
+          {zh ? '暂无预测——因子库为空时无法打分，请先挖掘因子' : 'No forecast yet. The factor library is empty, so scores cannot be computed.'}
         </div>
       )}
 
@@ -891,7 +908,7 @@ function ForecastSection() {
           {/* 看强 Top 10 */}
           <div className="rounded-xl border border-neon-green/20 bg-white/[0.02] p-3">
             <p className="mb-2 text-sm font-extrabold text-neon-green drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]">
-              看强 Top 10 <span className="font-mono text-[10px] font-medium text-slate-500">综合因子得分最高</span>
+              {zh ? '看强 Top 10' : 'Bullish Top 10'} <span className="font-mono text-[10px] font-medium text-slate-500">{zh ? '综合因子得分最高' : 'highest composite factor scores'}</span>
             </p>
             <div className="flex flex-col gap-1.5">
               {top.map((r, i) => (
@@ -903,7 +920,7 @@ function ForecastSection() {
           {/* 看弱 Bottom 10 */}
           <div className="rounded-xl border border-neon-red/20 bg-white/[0.02] p-3">
             <p className="mb-2 text-sm font-extrabold text-neon-red drop-shadow-[0_0_8px_rgba(251,113,133,0.5)]">
-              看弱 Bottom 10 <span className="font-mono text-[10px] font-medium text-slate-500">综合因子得分最低</span>
+              {zh ? '看弱 Bottom 10' : 'Bearish Bottom 10'} <span className="font-mono text-[10px] font-medium text-slate-500">{zh ? '综合因子得分最低' : 'lowest composite factor scores'}</span>
             </p>
             <div className="flex flex-col gap-1.5">
               {bottom.map((r, i) => (
@@ -918,9 +935,9 @@ function ForecastSection() {
       {forecast && (
         <div className="mt-3 rounded-xl border border-amber-400/50 bg-amber-400/10 px-4 py-3">
           <p className="text-xs font-bold text-amber-300">
-            ⚠ 置信度声明 ·{' '}
+            {zh ? '置信度声明' : 'Confidence statement'} ·{' '}
             <span className="font-mono font-medium">
-              平均留出IC {fmtIc(forecast.confidence.avg_holdout_ic)} · 基于 {forecast.confidence.n_factors} 个因子
+              {zh ? '平均留出IC' : 'avg holdout IC'} {fmtIc(forecast.confidence.avg_holdout_ic)} · {zh ? '基于' : 'based on'} {forecast.confidence.n_factors} {zh ? '个因子' : 'factors'}
             </span>
           </p>
           <p className="mt-1 text-xs leading-relaxed text-amber-200/90">

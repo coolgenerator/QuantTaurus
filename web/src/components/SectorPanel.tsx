@@ -7,6 +7,7 @@ import {
   type SectorStat,
   type TickerStat,
 } from '../api'
+import { useI18n } from '../i18n'
 
 interface Props {
   onSelectSymbol: (symbol: string) => void
@@ -22,22 +23,22 @@ function fmtSignedPct(v: number | null, digits = 1): string {
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`
 }
 
-const LABEL_STYLES: Record<SectorLabel, { text: string; cls: string }> = {
+const LABEL_STYLES: Record<SectorLabel, { textKey: string; cls: string }> = {
   leader: {
-    text: '领跑',
+    textKey: 'sector.leader',
     cls: 'border border-neon-cyan/50 bg-neon-cyan/10 text-neon-cyan',
   },
   emerging: {
     // 潜在下一热点信号——脉冲发光、最醒目
-    text: '潜在热点',
+    textKey: 'sector.emerging',
     cls: 'border border-neon-purple/60 bg-neon-purple/15 text-neon-purple animate-glow-purple',
   },
   neutral: {
-    text: '中性',
+    textKey: 'sector.neutral',
     cls: 'border border-white/15 bg-white/5 text-slate-400',
   },
   laggard: {
-    text: '落后',
+    textKey: 'sector.laggard',
     cls: 'border border-red-900/70 bg-red-950/40 text-red-400/90',
   },
 }
@@ -116,17 +117,19 @@ function MiniStat({
 function TickerChip({
   stat,
   onSelect,
+  t,
 }: {
   stat: TickerStat
   onSelect: (symbol: string) => void
+  t: (key: string, vars?: Record<string, string | number>) => string
 }) {
   const r = logToSimple(stat.mom_3m)
   return (
     <button
       onClick={() => onSelect(stat.symbol)}
-      title={`${stat.symbol} · 收盘 ${fmtNum(stat.last_close)} · 1m ${fmtSignedPct(
+      title={`${stat.symbol} · ${t('sector.close')} ${fmtNum(stat.last_close)} · 1m ${fmtSignedPct(
         logToSimple(stat.mom_1m),
-      )} · 6m ${fmtSignedPct(logToSimple(stat.mom_6m))} · 20d 波动 ${fmtNum(stat.vol_20d, 3)}`}
+      )} · 6m ${fmtSignedPct(logToSimple(stat.mom_6m))} · ${t('sector.vol20d')} ${fmtNum(stat.vol_20d, 3)}`}
       className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left transition hover:scale-[1.04] hover:brightness-125 ${
         stat.above_ma50 ? 'border border-neon-green/50' : 'border border-transparent'
       }`}
@@ -143,11 +146,13 @@ function SectorRow({
   expanded,
   onToggle,
   onSelectSymbol,
+  t,
 }: {
   sector: SectorStat
   expanded: boolean
   onToggle: () => void
   onSelectSymbol: (symbol: string) => void
+  t: (key: string, vars?: Record<string, string | number>) => string
 }) {
   const label = LABEL_STYLES[sector.label] ?? LABEL_STYLES.neutral
   return (
@@ -163,7 +168,7 @@ function SectorRow({
       <div
         className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5"
         onClick={onToggle}
-        title={expanded ? '收起成分股' : '展开成分股热力格'}
+        title={expanded ? t('sector.collapse') : t('sector.expand')}
       >
         {/* 排名 + 名称 + 标签 */}
         <div className="flex w-44 shrink-0 items-center gap-3">
@@ -172,7 +177,7 @@ function SectorRow({
           </span>
           <div>
             <p className="text-sm font-bold text-slate-200">{sector.name_zh}</p>
-            <span className={`badge mt-0.5 ${label.cls}`}>{label.text}</span>
+            <span className={`badge mt-0.5 ${label.cls}`}>{t(label.textKey)}</span>
           </div>
         </div>
 
@@ -229,15 +234,15 @@ function SectorRow({
         </div>
 
         <span className="ml-auto font-mono text-[10px] text-slate-600">
-          {expanded ? '▲' : '▼'} {sector.tickers.length} 只
+          {expanded ? '▲' : '▼'} {t('sector.tickers', { n: sector.tickers.length })}
         </span>
       </div>
 
       {/* 成分股热力格 */}
       {expanded && (
         <div className="grid grid-cols-2 gap-1.5 border-t border-white/5 p-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-          {sector.tickers.map((t) => (
-            <TickerChip key={t.symbol} stat={t} onSelect={onSelectSymbol} />
+          {sector.tickers.map((ticker) => (
+            <TickerChip key={ticker.symbol} stat={ticker} onSelect={onSelectSymbol} t={t} />
           ))}
         </div>
       )}
@@ -246,6 +251,7 @@ function SectorRow({
 }
 
 export default function SectorPanel({ onSelectSymbol }: Props) {
+  const { lang, t } = useI18n()
   const [report, setReport] = useState<SectorReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -281,11 +287,11 @@ export default function SectorPanel({ onSelectSymbol }: Props) {
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="panel-title">
-          Sector Rotation <span className="text-slate-500">· 板块轮动</span>
+          {t('sector.title')} <span className="text-slate-500">· {t('sector.subtitle')}</span>
         </h2>
         {report && (
           <span className="badge border border-white/10 bg-white/5 font-mono text-slate-500">
-            as of {new Date(report.as_of).toLocaleString('zh-CN', { hour12: false })}
+            as of {new Date(report.as_of).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}
           </span>
         )}
         <button
@@ -293,7 +299,7 @@ export default function SectorPanel({ onSelectSymbol }: Props) {
           disabled={loading}
           className="ml-auto rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-neon-cyan/50 hover:text-neon-cyan disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? '刷新中…' : '↻ 刷新'}
+          {loading ? t('common.refreshing') : `↻ ${t('common.refresh')}`}
         </button>
       </div>
 
@@ -310,23 +316,23 @@ export default function SectorPanel({ onSelectSymbol }: Props) {
           {/* 顶部摘要条 */}
           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-white/10 bg-gradient-to-r from-cyan-500/10 via-transparent to-violet-500/10 px-4 py-2.5 text-sm">
             <span className="text-slate-400">
-              当前领跑:{' '}
+              {t('sector.currentLeader')}{' '}
               <span className="font-bold text-neon-cyan">{leader ? leader.name_zh : '—'}</span>
             </span>
             <span className="hidden text-slate-700 sm:inline">·</span>
             {emerging ? (
               <span className="text-slate-400">
-                潜在下一热点:{' '}
+                {t('sector.nextHotspot')}{' '}
                 <span className="font-bold text-neon-purple drop-shadow-[0_0_8px_rgba(167,139,250,0.7)]">
                   {emerging.name_zh}
                 </span>
               </span>
             ) : (
-              <span className="text-slate-500">暂无明确轮入信号</span>
+              <span className="text-slate-500">{t('sector.noRotation')}</span>
             )}
             <span className="hidden text-slate-700 sm:inline">·</span>
             <span className="text-slate-400">
-              基准 SPY 3m:{' '}
+              {t('sector.benchmark')}{' '}
               <span
                 className={`font-mono font-bold ${
                   (spy3m ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
@@ -346,12 +352,13 @@ export default function SectorPanel({ onSelectSymbol }: Props) {
                 expanded={expandedKey === s.key}
                 onToggle={() => setExpandedKey((k) => (k === s.key ? null : s.key))}
                 onSelectSymbol={onSelectSymbol}
+                t={t}
               />
             ))}
           </div>
 
           <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-            {report.method_note} —— 以上为动量统计信号，非基本面预测，不构成投资建议。
+            {report.method_note} — {t('sector.methodSuffix')}
           </p>
         </>
       )}

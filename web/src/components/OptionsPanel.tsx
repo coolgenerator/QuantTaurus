@@ -6,10 +6,8 @@ import {
   type OptionChain,
   type OptionRow,
 } from '../api'
+import { useI18n } from '../i18n'
 import { isCrypto } from './TopBar'
-
-const SERVICE_HINT =
-  '期权服务未运行：python3 bridge/options_service.py（需 OpenD 已登录）'
 
 const CYAN = '#22d3ee'
 const PURPLE = '#a78bfa'
@@ -78,6 +76,7 @@ function StatCard({
 // ---------- IV smile (canvas) ----------
 
 function IVSmileChart({ chain }: { chain: OptionChain }) {
+  const { t } = useI18n()
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -109,7 +108,7 @@ function IVSmileChart({ chain }: { chain: OptionChain }) {
       ctx.fillStyle = 'rgba(148,163,184,0.6)'
       ctx.font = '12px ui-monospace, monospace'
       ctx.textAlign = 'center'
-      ctx.fillText('IV 数据不足，无法绘制微笑曲线', W / 2, H / 2)
+      ctx.fillText(t('options.ivInsufficient'), W / 2, H / 2)
       return
     }
 
@@ -190,7 +189,7 @@ function IVSmileChart({ chain }: { chain: OptionChain }) {
     }
     drawSeries(calls, CYAN)
     drawSeries(puts, PURPLE)
-  }, [chain])
+  }, [chain, t])
 
   useEffect(() => {
     draw()
@@ -204,7 +203,7 @@ function IVSmileChart({ chain }: { chain: OptionChain }) {
   return (
     <div className="glass-card p-4">
       <div className="mb-2 flex items-center gap-3">
-        <h3 className="panel-title">IV Smile · 波动率微笑</h3>
+        <h3 className="panel-title">{t('options.ivSmile')}</h3>
         <span className="ml-auto flex items-center gap-3 font-mono text-[10px] text-slate-500">
           <span className="flex items-center gap-1">
             <span className="h-1.5 w-3 rounded-full" style={{ background: CYAN }} /> Call
@@ -224,6 +223,7 @@ function IVSmileChart({ chain }: { chain: OptionChain }) {
 // ---------- OI distribution (diverging bars) ----------
 
 function OIDistribution({ chain }: { chain: OptionChain }) {
+  const { t } = useI18n()
   const strikeRows = useMemo(() => buildStrikeRows(chain.rows), [chain])
   const maxPain = chain.analysis?.max_pain ?? null
 
@@ -238,14 +238,14 @@ function OIDistribution({ chain }: { chain: OptionChain }) {
   return (
     <div className="glass-card flex flex-col p-4">
       <div className="mb-2 flex items-center gap-3">
-        <h3 className="panel-title">Open Interest · 持仓分布</h3>
+        <h3 className="panel-title">{t('options.oiDistribution')}</h3>
         <span className="ml-auto flex items-center gap-3 font-mono text-[10px] text-slate-500">
           <span style={{ color: PURPLE }}>← Put OI</span>
           <span style={{ color: CYAN }}>Call OI →</span>
         </span>
       </div>
       {withOI.length === 0 ? (
-        <p className="py-8 text-center text-xs text-slate-500">暂无持仓量数据</p>
+        <p className="py-8 text-center text-xs text-slate-500">{t('options.noOi')}</p>
       ) : (
         <div className="max-h-[260px] overflow-y-auto pr-1">
           {withOI.map((r) => {
@@ -260,9 +260,12 @@ function OIDistribution({ chain }: { chain: OptionChain }) {
                     ? 'border border-amber-400/50 bg-amber-400/10'
                     : 'border border-transparent'
                 }`}
-                title={`行权价 ${r.strike} · Call OI ${fmtInt(r.call?.open_interest)} · Put OI ${fmtInt(
-                  r.put?.open_interest,
-                )}${isMaxPain ? ' · 最大痛点' : ''}`}
+                title={t('options.strikeTitle', {
+                  strike: r.strike,
+                  call: fmtInt(r.call?.open_interest),
+                  put: fmtInt(r.put?.open_interest),
+                  maxPain: isMaxPain ? t('options.maxPainSuffix') : '',
+                })}
               >
                 {/* put side (left) */}
                 <div className="flex h-3 flex-1 justify-end">
@@ -301,7 +304,7 @@ function OIDistribution({ chain }: { chain: OptionChain }) {
       )}
       {maxPain !== null && (
         <p className="mt-2 font-mono text-[10px] text-amber-300/80">
-          ⚡ 最大痛点 {fmtNum(maxPain)} 行已高亮
+          {t('options.maxPainHighlighted', { value: fmtNum(maxPain) })}
         </p>
       )}
     </div>
@@ -311,6 +314,7 @@ function OIDistribution({ chain }: { chain: OptionChain }) {
 // ---------- T-quote table ----------
 
 function TQuoteTable({ chain }: { chain: OptionChain }) {
+  const { t } = useI18n()
   const strikeRows = useMemo(() => buildStrikeRows(chain.rows), [chain])
   const atmStrike = useMemo(() => {
     if (strikeRows.length === 0) return null
@@ -331,9 +335,9 @@ function TQuoteTable({ chain }: { chain: OptionChain }) {
   return (
     <div className="glass-card flex flex-col p-4">
       <div className="mb-2 flex flex-wrap items-center gap-3">
-        <h3 className="panel-title">T-Quote · T 型报价</h3>
+        <h3 className="panel-title">{t('options.tQuote')}</h3>
         <span className="ml-auto font-mono text-[10px] text-slate-500">
-          实值 (ITM) 区背景更亮 · ATM 行高亮 · {strikeRows.length} 个行权价
+          {t('options.tQuoteHint', { n: strikeRows.length })}
         </span>
       </div>
       <div className="max-h-[420px] overflow-auto rounded-xl border border-white/5">
@@ -426,6 +430,7 @@ function TQuoteTable({ chain }: { chain: OptionChain }) {
 // ---------- main panel ----------
 
 export default function OptionsPanel({ symbol }: { symbol: string }) {
+  const { t } = useI18n()
   /** 已拉取到期日的标的 + 列表。 */
   const [expState, setExpState] = useState<{ symbol: string; expirations: string[] } | null>(null)
   const [loadingExp, setLoadingExp] = useState(false)
@@ -458,12 +463,12 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
       if (expSeqRef.current !== seq) return []
       setExpState({ symbol: sym, expirations: [] })
       setExpiry('')
-      setExpError(SERVICE_HINT)
+      setExpError(t('options.serviceHint'))
       return []
     } finally {
       if (expSeqRef.current === seq) setLoadingExp(false)
     }
-  }, [])
+  }, [t])
 
   // 全局 symbol 变化：清掉旧标的的链/错误，自动重拉到期日（加密货币不发请求）。
   useEffect(() => {
@@ -490,12 +495,12 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       // 网络层失败（sidecar 没起）给友好提示，HTTP 错误保留原文。
-      setError(msg.includes('failed:') ? msg : SERVICE_HINT)
+      setError(msg.includes('failed:') ? msg : t('options.serviceHint'))
       setChain(null)
     } finally {
       setLoadingChain(false)
     }
-  }, [symbol, expiry, loadExpirations])
+  }, [symbol, expiry, loadExpirations, t])
 
   const a = chain?.analysis ?? null
   const atmIv =
@@ -513,7 +518,7 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
     return (
       <div className="glass-card flex h-56 flex-col items-center justify-center gap-2 p-6 text-center">
         <p className="font-mono text-lg font-bold text-neon-cyan">{symbol}</p>
-        <p className="text-sm text-slate-400">期权仅支持美股标的——请在顶栏选择/搜索美股</p>
+        <p className="text-sm text-slate-400">{t('options.cryptoOnlyStocks')}</p>
       </div>
     )
   }
@@ -523,18 +528,18 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
       {/* 控制行 */}
       <section className="glass-card flex flex-wrap items-end gap-3 p-4">
         <h2 className="panel-title mr-2 self-center">
-          Options Chain <span className="text-slate-500">· 期权链分析</span>
+          {t('options.chainTitle')} <span className="text-slate-500">· {t('options.chainSubtitle')}</span>
         </h2>
 
         <div className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">标的（顶栏）</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">{t('options.symbolTopbar')}</span>
           <span className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 font-mono text-sm font-bold text-neon-cyan">
             {symbol}
           </span>
         </div>
 
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">到期日</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">{t('options.expiry')}</span>
           <select
             className="select-dark min-w-[140px] font-mono"
             value={expiry}
@@ -545,7 +550,7 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
             }}
             disabled={loadingExp || expirations.length === 0}
           >
-            {loadingExp && <option value="">加载中…</option>}
+            {loadingExp && <option value="">{t('common.loading')}</option>}
             {!loadingExp && expirations.length === 0 && <option value="">—</option>}
             {expirations.map((d) => (
               <option key={d} value={d}>
@@ -560,26 +565,26 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
           onClick={() => void loadChain()}
           disabled={loadingChain || loadingExp}
         >
-          {loadingChain ? '加载中…' : chain ? '刷新' : '加载期权链'}
+          {loadingChain ? t('options.loadingChain') : chain ? t('common.refresh') : t('options.loadChain')}
         </button>
 
         {loadingChain && (
           <span className="flex items-center gap-2 self-center text-xs text-slate-400">
             <span className="h-2 w-2 animate-pulse rounded-full bg-neon-cyan" />
-            拉取全链中，约 1~3 秒…
+            {t('options.loadingFullChain')}
           </span>
         )}
       </section>
 
       {expError && (
         <div className="flex items-center gap-3 rounded-lg border border-neon-red/40 bg-neon-red/10 px-4 py-3 text-sm text-neon-red">
-          <span className="flex-1">到期日加载失败：{expError}</span>
+          <span className="flex-1">{t('options.expLoadFailed', { error: expError })}</span>
           <button
             className="shrink-0 rounded-lg border border-neon-red/50 px-3 py-1 text-xs font-semibold transition hover:bg-neon-red/20"
             onClick={() => void loadExpirations(symbol)}
             disabled={loadingExp}
           >
-            {loadingExp ? '重试中…' : '重试'}
+            {loadingExp ? t('options.retrying') : t('options.retry')}
           </button>
         </div>
       )}
@@ -592,7 +597,7 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
 
       {!chain && !error && !expError && !loadingChain && (
         <div className="glass-card flex h-48 items-center justify-center text-sm text-slate-500">
-          选择到期日，点击「加载期权链」开始分析（后端缓存 120s，重复请求很快）。
+          {t('options.empty')}
         </div>
       )}
 
@@ -601,29 +606,29 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
           {/* 分析摘要卡片 */}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
             <StatCard
-              label={`${chain.symbol} 现价`}
+              label={t('options.spot', { symbol: chain.symbol })}
               value={fmtNum(chain.spot)}
               sub={chain.expiry}
               tone="cyan"
             />
             <StatCard
-              label="P/C 比 · 成交量"
+              label={t('options.pcrVolume')}
               value={fmtNum(a?.pcr_volume)}
-              sub={isNum(a?.pcr_volume) ? (a!.pcr_volume! > 1 ? '偏空' : '偏多') : undefined}
+              sub={isNum(a?.pcr_volume) ? (a!.pcr_volume! > 1 ? t('options.bearish') : t('options.bullish')) : undefined}
               tone={pcrTone(a?.pcr_volume)}
             />
             <StatCard
-              label="P/C 比 · 持仓量"
+              label={t('options.pcrOi')}
               value={fmtNum(a?.pcr_oi)}
-              sub={isNum(a?.pcr_oi) ? (a!.pcr_oi! > 1 ? '偏空' : '偏多') : undefined}
+              sub={isNum(a?.pcr_oi) ? (a!.pcr_oi! > 1 ? t('options.bearish') : t('options.bullish')) : undefined}
               tone={pcrTone(a?.pcr_oi)}
             />
             <StatCard
-              label="最大痛点"
+              label={t('options.maxPain')}
               value={fmtNum(a?.max_pain)}
               sub={
                 maxPainDist !== null
-                  ? `距现价 ${maxPainDist >= 0 ? '+' : ''}${maxPainDist.toFixed(1)}%`
+                  ? t('options.maxPainDist', { value: `${maxPainDist >= 0 ? '+' : ''}${maxPainDist.toFixed(1)}` })
                   : undefined
               }
               tone="neutral"
@@ -641,13 +646,13 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
               tone="neutral"
             />
             <StatCard
-              label="25Δ 偏度"
+              label={t('options.skew25d')}
               value={isNum(a?.skew_25d) ? `${a!.skew_25d! >= 0 ? '+' : ''}${a!.skew_25d!.toFixed(1)}` : '—'}
               sub={
                 isNum(a?.skew_25d)
                   ? a!.skew_25d! >= 0
-                    ? '下行保护偏贵'
-                    : '下行保护偏便宜'
+                    ? t('options.putProtectionExpensive')
+                    : t('options.putProtectionCheap')
                   : undefined
               }
               tone={isNum(a?.skew_25d) ? (a!.skew_25d! >= 0 ? 'neg' : 'pos') : 'neutral'}
@@ -664,7 +669,7 @@ export default function OptionsPanel({ symbol }: { symbol: string }) {
           <TQuoteTable chain={chain} />
 
           <p className="text-center text-[11px] text-slate-600">
-            数据源 moomoo OpenD · 延迟/快照数据 · 仅供分析参考
+            {t('options.dataSource')}
           </p>
         </>
       )}

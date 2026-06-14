@@ -19,6 +19,7 @@ import {
   type SpecKind,
   type StrategySpec, slotLabel,} from '../api'
 import { isCrypto } from './TopBar'
+import { useI18n } from '../i18n'
 import { useWsMessages } from '../ws'
 
 // ---------- constants ----------
@@ -32,32 +33,34 @@ const MOOMOO_US_COST: CostModel = {
 }
 
 const DAYS_OPTIONS: { value: number; label: string }[] = [
-  { value: 365, label: '1 年' },
-  { value: 730, label: '2 年' },
-  { value: 3650, label: '10 年' },
+  { value: 365, label: '1y' },
+  { value: 730, label: '2y' },
+  { value: 3650, label: '10y' },
 ]
 
-const METHOD_NOTE =
-  '命中率略高于50% × 盈亏比>1 是动量类策略的正常形态；DSR>0.95 才视为统计显著。回测为样本内参考，留出窗表现见血统。'
+const methodNote = (zh: boolean) =>
+  zh
+    ? '命中率略高于50% × 盈亏比>1 是动量类策略的正常形态；DSR>0.95 才视为统计显著。回测为样本内参考，留出窗表现见血统。'
+    : 'A hit rate slightly above 50% with profit factor above 1 is normal for momentum strategies. DSR > 0.95 is the bar for statistical significance. Backtests here are in-sample references; holdout behavior is shown in lineage.'
 
 // ---------- small helpers ----------
 
 /** Compact relative time, e.g. "3 小时前". */
-function relTime(ms: number): string {
+function relTime(ms: number, zh: boolean): string {
   if (!ms) return '—'
   const diff = Date.now() - ms
-  if (diff < 0) return '刚刚'
+  if (diff < 0) return zh ? '刚刚' : 'just now'
   const sec = Math.floor(diff / 1000)
-  if (sec < 60) return '刚刚'
+  if (sec < 60) return zh ? '刚刚' : 'just now'
   const min = Math.floor(sec / 60)
-  if (min < 60) return `${min} 分钟前`
+  if (min < 60) return zh ? `${min} 分钟前` : `${min}m ago`
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
+  if (hr < 24) return zh ? `${hr} 小时前` : `${hr}h ago`
   const day = Math.floor(hr / 24)
-  if (day < 30) return `${day} 天前`
+  if (day < 30) return zh ? `${day} 天前` : `${day}d ago`
   const mon = Math.floor(day / 30)
-  if (mon < 12) return `${mon} 个月前`
-  return `${Math.floor(mon / 12)} 年前`
+  if (mon < 12) return zh ? `${mon} 个月前` : `${mon}mo ago`
+  return zh ? `${Math.floor(mon / 12)} 年前` : `${Math.floor(mon / 12)}y ago`
 }
 
 function fmtDate(ms: number): string {
@@ -129,8 +132,10 @@ function GroupTitle({ tone, title, sub }: { tone: 'cyan' | 'purple'; title: stri
 // ---------- lineage mini timeline ----------
 
 function LineageTimeline({ record }: { record: ChampionRecord }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   if (record.lineage.length === 0) {
-    return <p className="font-mono text-[10px] text-slate-600">暂无血统记录</p>
+    return <p className="font-mono text-[10px] text-slate-600">{zh ? '暂无血统记录' : 'No lineage yet'}</p>
   }
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -142,11 +147,11 @@ function LineageTimeline({ record }: { record: ChampionRecord }) {
               ? 'bg-neon-green shadow-[0_0_6px_rgba(74,222,128,0.7)]'
               : 'bg-neon-red shadow-[0_0_6px_rgba(251,113,133,0.7)]'
           }`}
-          title={`第 ${i + 1} 代 · ${fmtDate(l.promoted_ms)} · holdout sharpe ${l.holdout_sharpe.toFixed(2)} · ${l.spec.kind}`}
+          title={zh ? `第 ${i + 1} 代 · ${fmtDate(l.promoted_ms)} · holdout sharpe ${l.holdout_sharpe.toFixed(2)} · ${l.spec.kind}` : `generation ${i + 1} · ${fmtDate(l.promoted_ms)} · holdout sharpe ${l.holdout_sharpe.toFixed(2)} · ${l.spec.kind}`}
         />
       ))}
       <span className="ml-1 font-mono text-[10px] text-slate-500">
-        最新 {record.lineage[record.lineage.length - 1].holdout_sharpe.toFixed(2)}
+        {zh ? '最新' : 'latest'} {record.lineage[record.lineage.length - 1].holdout_sharpe.toFixed(2)}
       </span>
     </div>
   )
@@ -204,8 +209,10 @@ const FAMILIES: FamilyInfo[] = [
   },
 ]
 
-const FAMILY_FOOTNOTE =
-  '算法（因子逻辑）通用于任何标的；下方档案卡是算法×参数×标的通过三道防过拟合闸门后的验证实例。'
+const familyFootnote = (zh: boolean) =>
+  zh
+    ? '算法（因子逻辑）通用于任何标的；下方档案卡是算法×参数×标的通过三道防过拟合闸门后的验证实例。'
+    : 'Algorithms and factor logic are symbol-agnostic. Profile cards below are validated algorithm × parameter × symbol instances that passed the anti-overfit gates.'
 
 interface FamilyInstance {
   /** Slot key, e.g. "SPY|1d". */
@@ -235,6 +242,8 @@ function FamilyCard({
   instances: FamilyInstance[]
   onJump: (key: string) => void
 }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   return (
     <div className="flex flex-col rounded-xl border border-white/10 bg-black/20 p-3 transition hover:border-neon-purple/40 hover:bg-white/5">
       {/* 家族名 + 中文名 */}
@@ -242,12 +251,12 @@ function FamilyCard({
         <span className="font-mono text-sm font-extrabold tracking-wide text-neon-purple drop-shadow-[0_0_8px_rgba(167,139,250,0.45)]">
           {family.name}
         </span>
-        <span className="text-sm font-bold text-slate-100">{family.zh}</span>
+        <span className="text-sm font-bold text-slate-100">{zh ? family.zh : family.name}</span>
       </div>
 
       {/* 因子构成 */}
       <p className="mt-1.5 text-[11px] leading-snug text-slate-400">
-        <span className="text-slate-500">因子: </span>
+        <span className="text-slate-500">{zh ? '因子' : 'Factors'}: </span>
         <span className="font-mono text-slate-300">{family.factors}</span>
       </p>
 
@@ -258,12 +267,12 @@ function FamilyCard({
       <div className="mt-2 border-t border-white/5 pt-2">
         {instances.length > 0 ? (
           <div className="flex flex-wrap items-center gap-1">
-            <span className="text-[10px] text-slate-500">通过闸门:</span>
+            <span className="text-[10px] text-slate-500">{zh ? '通过闸门' : 'Passed gates'}:</span>
             {instances.map((inst) => (
               <button
                 key={inst.key}
                 onClick={() => onJump(inst.key)}
-                title={`点击定位到 ${slotLabel(inst.key)} 的冠军档案卡`}
+                title={zh ? `点击定位到 ${slotLabel(inst.key)} 的冠军档案卡` : `Jump to ${slotLabel(inst.key)} champion profile`}
                 className="rounded-full border border-neon-green/40 bg-neon-green/10 px-2 py-0.5 font-mono text-[10px] font-bold text-neon-green transition hover:border-neon-green/80 hover:bg-neon-green/20 hover:shadow-[0_0_8px_rgba(74,222,128,0.4)]"
               >
                 {slotLabel(inst.key)}
@@ -275,7 +284,7 @@ function FamilyCard({
           </div>
         ) : (
           <span className="inline-block rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-500">
-            暂无通过闸门的实例
+            {zh ? '暂无通过闸门的实例' : 'No passing instances yet'}
           </span>
         )}
       </div>
@@ -290,14 +299,16 @@ function FamilySection({
   champions: ChampionRegistryMap
   onJump: (key: string) => void
 }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   return (
     <div className="mb-4 rounded-xl border border-neon-purple/20 bg-white/[0.02] p-3">
       <div className="mb-2.5 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-extrabold tracking-wide text-neon-purple drop-shadow-[0_0_8px_rgba(167,139,250,0.5)]">
-          策略家族 <span className="font-mono text-[10px] font-medium text-slate-500">· 算法视角</span>
+          {zh ? '策略家族' : 'Strategy Families'} <span className="font-mono text-[10px] font-medium text-slate-500">· {zh ? '算法视角' : 'algorithm view'}</span>
         </h3>
         <span className="badge border border-white/10 bg-white/5 font-mono text-slate-400">
-          {FAMILIES.length} 家族
+          {FAMILIES.length} {zh ? '家族' : 'families'}
         </span>
       </div>
 
@@ -312,7 +323,7 @@ function FamilySection({
         ))}
       </div>
 
-      <p className="mt-2.5 text-[10px] leading-relaxed text-slate-500">{FAMILY_FOOTNOTE}</p>
+      <p className="mt-2.5 text-[10px] leading-relaxed text-slate-500">{familyFootnote(zh)}</p>
     </div>
   )
 }
@@ -332,6 +343,8 @@ function StrategyCard({
   running: boolean
   onRun: (days: number) => void
 }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const [days, setDays] = useState(3650)
   const [jsonOpen, setJsonOpen] = useState(false)
   const latest = record.lineage.length > 0 ? record.lineage[record.lineage.length - 1] : null
@@ -358,13 +371,13 @@ function StrategyCard({
             {spec.kind}
           </span>
         ) : (
-          <span className="badge border border-white/15 bg-white/5 text-slate-500">空缺</span>
+          <span className="badge border border-white/15 bg-white/5 text-slate-500">{zh ? '空缺' : 'empty'}</span>
         )}
         <span className="badge border border-white/10 bg-white/5 font-mono text-slate-400">
-          {record.lineage.length} 代血统
+          {record.lineage.length} {zh ? '代血统' : 'lineage'}
         </span>
         <span className="ml-auto font-mono text-[10px] text-slate-500">
-          晋升 {relTime(promotedMs)}
+          {zh ? '晋升' : 'promoted'} {relTime(promotedMs, zh)}
         </span>
       </div>
 
@@ -374,7 +387,7 @@ function StrategyCard({
           {isEnsemble ? (
             <>
               <p className="font-mono text-[11px] text-slate-400">
-                成员:{' '}
+                {zh ? '成员' : 'Members'}:{' '}
                 <span className="text-slate-200">
                   {(spec as Extract<StrategySpec, { kind: 'ensemble' }>).members
                     .map((m) => m.kind)
@@ -385,7 +398,7 @@ function StrategyCard({
                 className="mt-1 font-mono text-[10px] text-slate-500 transition hover:text-neon-cyan"
                 onClick={() => setJsonOpen((v) => !v)}
               >
-                {jsonOpen ? '▴ 收起完整 JSON' : '▾ 展开完整 JSON'}
+                {jsonOpen ? (zh ? '▴ 收起完整 JSON' : '▴ Collapse JSON') : (zh ? '▾ 展开完整 JSON' : '▾ Expand JSON')}
               </button>
               {jsonOpen && (
                 <pre className="mt-1.5 max-h-44 overflow-auto rounded-lg border border-neon-purple/20 bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-neon-cyan">
@@ -409,7 +422,7 @@ function StrategyCard({
       {/* 血统迷你时间线 */}
       <div className="mt-2.5">
         <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-          血统 · holdout sharpe
+          {zh ? '血统' : 'Lineage'} · holdout sharpe
         </p>
         <LineageTimeline record={record} />
       </div>
@@ -420,11 +433,11 @@ function StrategyCard({
           className="select-dark py-1 text-xs"
           value={days}
           onChange={(e) => setDays(Number(e.target.value))}
-          title="回测窗口"
+          title={zh ? '回测窗口' : 'Backtest window'}
         >
           {DAYS_OPTIONS.map((d) => (
             <option key={d.value} value={d.value}>
-              {d.label}
+              {zh ? d.label.replace('y', ' 年') : d.label}
             </option>
           ))}
         </select>
@@ -433,7 +446,7 @@ function StrategyCard({
           onClick={() => onRun(days)}
           disabled={running || !spec}
         >
-          {running ? '回测中…' : '跑回测验证'}
+          {running ? (zh ? '回测中...' : 'Backtesting...') : (zh ? '跑回测验证' : 'Run validation')}
         </button>
       </div>
     </div>
@@ -451,6 +464,8 @@ interface RunMeta {
 }
 
 function ResultSection({ meta, result }: { meta: RunMeta; result: BacktestResult }) {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const chartDivRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const equityRef = useRef<ISeriesApi<'Area'> | null>(null)
@@ -514,54 +529,54 @@ function ResultSection({ meta, result }: { meta: RunMeta; result: BacktestResult
     <div className="mt-4 rounded-xl border border-neon-cyan/25 bg-black/30 p-4 shadow-[0_0_18px_rgba(34,211,238,0.12)]">
       <div className="flex flex-wrap items-baseline gap-2">
         <h3 className="font-mono text-base font-extrabold tracking-wide text-slate-100">
-          {slotLabel(meta.key)} <span className="text-sm font-medium text-slate-500">回测验证</span>
+          {slotLabel(meta.key)} <span className="text-sm font-medium text-slate-500">{zh ? '回测验证' : 'validation backtest'}</span>
         </h3>
         <span className="ml-auto font-mono text-[10px] text-slate-500">
-          回测区间 {rangeStr} · {meta.days}d · 成本假设:{' '}
-          {meta.crypto ? '自动（加密资产默认）' : 'moomoo 美股成本口径'}
+          {zh ? '回测区间' : 'range'} {rangeStr} · {meta.days}d · {zh ? '成本假设' : 'cost'}:{' '}
+          {meta.crypto ? (zh ? '自动（加密资产默认）' : 'auto crypto default') : (zh ? 'moomoo 美股成本口径' : 'moomoo US stock model')}
         </span>
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* 预测准确度组 */}
         <div>
-          <GroupTitle tone="cyan" title="预测准确度" sub="Prediction Accuracy" />
+          <GroupTitle tone="cyan" title={zh ? '预测准确度' : 'Prediction Accuracy'} sub={zh ? 'Prediction Accuracy' : ''} />
           <div className="grid grid-cols-2 gap-2">
             <Metric
-              label="方向命中率 Hit Rate"
+              label={zh ? '方向命中率 Hit Rate' : 'Hit Rate'}
               value={fmtPct(m.hit_rate, 1)}
               tone={m.hit_rate >= 0.5 ? 'pos' : 'neg'}
-              sub="持仓bar中赚钱bar占比"
+              sub={zh ? '持仓bar中赚钱bar占比' : 'share of profitable held bars'}
               big
             />
             <Metric
-              label="盈亏比 Profit Factor"
+              label={zh ? '盈亏比 Profit Factor' : 'Profit Factor'}
               value={pfDisplay}
               tone={pfTone}
-              sub="总盈利 ÷ 总亏损"
+              sub={zh ? '总盈利 ÷ 总亏损' : 'gross profit / gross loss'}
               big
             />
             <Metric
-              label="笔级胜率 Win Rate"
+              label={zh ? '笔级胜率 Win Rate' : 'Win Rate'}
               value={fmtPct(m.win_rate, 1)}
               tone={m.win_rate >= 0.5 ? 'pos' : 'neg'}
             />
-            <Metric label="交易笔数 Trades" value={String(m.num_trades)} tone="neutral" />
+            <Metric label={zh ? '交易笔数 Trades' : 'Trades'} value={String(m.num_trades)} tone="neutral" />
           </div>
         </div>
 
         {/* 期望收益组 */}
         <div>
-          <GroupTitle tone="purple" title="期望收益" sub="Expected Return" />
+          <GroupTitle tone="purple" title={zh ? '期望收益' : 'Expected Return'} sub={zh ? 'Expected Return' : ''} />
           <div className="grid grid-cols-3 gap-2">
             <Metric
-              label="年化收益"
+              label={zh ? '年化收益' : 'Annual Return'}
               value={fmtPct(m.annual_return)}
               tone={signTone(m.annual_return)}
             />
             <Metric label="Sharpe" value={fmtNum(m.sharpe)} tone={signTone(m.sharpe)} />
             <Metric label="Sortino" value={fmtNum(m.sortino)} tone={signTone(m.sortino)} />
-            <Metric label="最大回撤" value={fmtPct(m.max_drawdown)} tone="neg" />
+            <Metric label={zh ? '最大回撤' : 'Max Drawdown'} value={fmtPct(m.max_drawdown)} tone="neg" />
             <Metric label="Calmar" value={fmtNum(m.calmar)} tone={signTone(m.calmar)} />
             <Metric
               label="DSR"
@@ -581,6 +596,8 @@ function ResultSection({ meta, result }: { meta: RunMeta; result: BacktestResult
 // ---------- panel ----------
 
 export default function StrategiesPanel() {
+  const { lang } = useI18n()
+  const zh = lang === 'zh'
   const [champions, setChampions] = useState<ChampionRegistryMap>({})
   const [error, setError] = useState<string | null>(null)
   const [btError, setBtError] = useState<string | null>(null)
@@ -656,10 +673,10 @@ export default function StrategiesPanel() {
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex items-center gap-2">
         <h2 className="panel-title">
-          Strategy Profiles <span className="text-slate-500">· 策略档案</span>
+          Strategy Profiles <span className="text-slate-500">· {zh ? '策略档案' : 'strategy profiles'}</span>
         </h2>
         <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-          {keys.length} 策略
+          {keys.length} {zh ? '策略' : 'strategies'}
         </span>
       </div>
 
@@ -674,7 +691,7 @@ export default function StrategiesPanel() {
 
       {keys.length === 0 && !error && (
         <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          暂无策略档案——启动进化晋升冠军后将自动建档
+          {zh ? '暂无策略档案——启动进化晋升冠军后将自动建档' : 'No strategy profiles yet. They appear after an evolution run promotes a champion.'}
         </div>
       )}
 
@@ -712,7 +729,7 @@ export default function StrategiesPanel() {
 
       {result && runMeta && <ResultSection meta={runMeta} result={result} />}
 
-      <p className="mt-3 text-[11px] leading-relaxed text-slate-500">{METHOD_NOTE}</p>
+      <p className="mt-3 text-[11px] leading-relaxed text-slate-500">{methodNote(zh)}</p>
     </section>
   )
 }

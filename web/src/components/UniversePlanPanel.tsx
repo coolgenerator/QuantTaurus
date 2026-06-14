@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchUniversePlan, fmtNum, fmtPct, type UniversePlan, type UniversePlanLeg } from '../api'
+import { useI18n } from '../i18n'
 
 interface Props {
   /** 点击 symbol 联动主图（App 层负责切回股票分析页）。 */
@@ -43,9 +44,11 @@ function WeightBar({ frac, cls }: { frac: number; cls: string }) {
 function LegCard({
   leg,
   onSelectSymbol,
+  t,
 }: {
   leg: UniversePlanLeg
   onSelectSymbol: (symbol: string) => void
+  t: (key: string, vars?: Record<string, string | number>) => string
 }) {
   const theme = SIDE_THEME[leg.side]
   return (
@@ -56,13 +59,13 @@ function LegCard({
       <div className="flex items-center gap-2">
         <button
           onClick={() => onSelectSymbol(leg.symbol)}
-          title={`查看 ${leg.symbol} 主图分析`}
+          title={t('universe.viewChart', { symbol: leg.symbol })}
           className={`font-mono text-lg font-extrabold tracking-wide transition hover:scale-105 hover:brightness-125 ${theme.symbol}`}
         >
           {leg.symbol}
         </button>
         <span className={`badge font-mono text-[11px] ${theme.scoreBadge}`}>
-          因子分 {fmtNum(leg.score, 3)}
+          {t('universe.factorScore', { score: fmtNum(leg.score, 3) })}
         </span>
       </div>
 
@@ -70,11 +73,11 @@ function LegCard({
       <div className="mt-1.5 flex items-center gap-3">
         {leg.shares > 0 ? (
           <p className="shrink-0 font-mono text-sm font-extrabold text-slate-100">
-            ${fmtNum(leg.dollars, 0)} = {leg.shares}股 @ ${fmtNum(leg.last_close)}
+            ${fmtNum(leg.dollars, 0)} = {leg.shares} {t('common.shares')} @ ${fmtNum(leg.last_close)}
           </p>
         ) : (
           <p className="shrink-0 font-mono text-sm font-extrabold text-amber-400">
-            单股超配额，需调高资金
+            {t('universe.oneShareTooHigh')}
             <span className="ml-1 text-[11px] font-semibold text-amber-400/70">
               (@ ${fmtNum(leg.last_close)})
             </span>
@@ -88,7 +91,7 @@ function LegCard({
 
       {/* 小字行：年化波动 + 期权替代提示 */}
       <p className="mt-1 text-[11px] text-slate-500">
-        年化波动 {fmtPct(leg.vol_annual, 0)} · {leg.option_hint}
+        {t('universe.annualVol', { value: fmtPct(leg.vol_annual, 0) })} · {leg.option_hint}
       </p>
     </div>
   )
@@ -100,11 +103,13 @@ function SideColumn({
   title,
   legs,
   onSelectSymbol,
+  t,
 }: {
   side: 'long' | 'short'
   title: string
   legs: UniversePlanLeg[]
   onSelectSymbol: (symbol: string) => void
+  t: (key: string, vars?: Record<string, string | number>) => string
 }) {
   const theme = SIDE_THEME[side]
   return (
@@ -112,17 +117,18 @@ function SideColumn({
       <h3 className={`text-sm font-extrabold tracking-wide ${theme.header}`}>{title}</h3>
       {legs.length === 0 && (
         <div className="flex h-20 items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-slate-500">
-          暂无候选标的
+          {t('universe.noCandidates')}
         </div>
       )}
       {legs.map((leg) => (
-        <LegCard key={leg.symbol} leg={leg} onSelectSymbol={onSelectSymbol} />
+        <LegCard key={leg.symbol} leg={leg} onSelectSymbol={onSelectSymbol} t={t} />
       ))}
     </div>
   )
 }
 
 export default function UniversePlanPanel({ onSelectSymbol }: Props) {
+  const { lang, t } = useI18n()
   const [k, setK] = useState<number>(5)
   const [capital, setCapital] = useState<number>(10_000)
   const [includeShorts, setIncludeShorts] = useState(true)
@@ -173,15 +179,15 @@ export default function UniversePlanPanel({ onSelectSymbol }: Props) {
       {/* 标题 + as_of / horizon 徽章 */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="panel-title">
-          UNIVERSE TOP-K <span className="text-slate-500">· 全池精选计划</span>
+          {t('universe.title')} <span className="text-slate-500">· {t('universe.subtitle')}</span>
         </h2>
         {plan && (
           <>
             <span className="badge border border-white/15 bg-white/5 font-mono text-slate-400">
-              {new Date(plan.as_of).toLocaleDateString('zh-CN')}
+              {new Date(plan.as_of).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US')}
             </span>
             <span className="badge border border-neon-cyan/40 bg-neon-cyan/10 font-mono text-neon-cyan">
-              未来{Math.round(plan.horizon_days)}日
+              {t('universe.futureDays', { n: Math.round(plan.horizon_days) })}
             </span>
           </>
         )}
@@ -207,7 +213,7 @@ export default function UniversePlanPanel({ onSelectSymbol }: Props) {
         </div>
 
         <label className="flex items-center gap-1 text-xs text-slate-500">
-          资金
+          {t('universe.capital')}
           <span className="font-mono text-slate-400">$</span>
           <input
             type="number"
@@ -230,7 +236,7 @@ export default function UniversePlanPanel({ onSelectSymbol }: Props) {
           <span
             className={`h-2 w-2 rounded-full ${includeShorts ? 'bg-neon-purple' : 'bg-slate-600'}`}
           />
-          含空头
+          {t('universe.includeShorts')}
         </button>
 
         <button
@@ -238,7 +244,7 @@ export default function UniversePlanPanel({ onSelectSymbol }: Props) {
           disabled={loading}
           className="ml-auto rounded-lg border border-neon-cyan/50 bg-neon-cyan/10 px-4 py-1.5 text-xs font-bold text-neon-cyan transition hover:bg-neon-cyan/20 hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? '生成中…' : '⚡ 生成计划'}
+          {loading ? t('universe.generating') : `⚡ ${t('universe.generate')}`}
         </button>
       </div>
 
@@ -247,14 +253,14 @@ export default function UniversePlanPanel({ onSelectSymbol }: Props) {
         <div className="mb-2 rounded-lg border border-neon-red/40 bg-neon-red/10 px-3 py-2 text-xs text-neon-red">
           {error}
           {factorLibEmpty && (
-            <span className="ml-1 font-bold text-amber-400">→ 先去因子 Lab 挖掘</span>
+            <span className="ml-1 font-bold text-amber-400">→ {t('universe.factorLabHint')}</span>
           )}
         </div>
       )}
 
       {!plan && !error && (
         <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          全池计划生成中…
+          {t('universe.loading')}
         </div>
       )}
 
@@ -264,16 +270,18 @@ export default function UniversePlanPanel({ onSelectSymbol }: Props) {
           <div className={`grid grid-cols-1 gap-4 ${showShorts ? 'lg:grid-cols-2' : ''}`}>
             <SideColumn
               side="long"
-              title="📈 做多 Top-K"
+              title={`📈 ${t('universe.longTop')}`}
               legs={plan.longs}
               onSelectSymbol={onSelectSymbol}
+              t={t}
             />
             {showShorts && (
               <SideColumn
                 side="short"
-                title="📉 做空 Bottom-K"
+                title={`📉 ${t('universe.shortBottom')}`}
                 legs={plan.shorts}
                 onSelectSymbol={onSelectSymbol}
+                t={t}
               />
             )}
           </div>
@@ -282,10 +290,11 @@ export default function UniversePlanPanel({ onSelectSymbol }: Props) {
           <p className="mt-3 text-[11px] leading-relaxed text-slate-400">{plan.sizing_rule}</p>
           <div className="mt-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2">
             <p className="text-[11px] leading-relaxed text-amber-400">
-              {plan.confidence.note} · 基于 {plan.confidence.n_factors} 个因子，平均样本外 IC{' '}
-              <span className="font-mono font-bold">
-                {fmtNum(plan.confidence.avg_holdout_ic, 4)}
-              </span>
+              {t('universe.confidenceNote', {
+                note: plan.confidence.note,
+                n: plan.confidence.n_factors,
+                ic: fmtNum(plan.confidence.avg_holdout_ic, 4),
+              })}
             </p>
           </div>
         </>
