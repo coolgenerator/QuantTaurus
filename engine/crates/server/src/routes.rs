@@ -16,6 +16,17 @@ use std::sync::Arc;
 
 type AppResult<T> = Result<T, (StatusCode, String)>;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct LangQuery {
+    lang: Option<String>,
+}
+
+impl LangQuery {
+    fn lang(&self) -> crate::plan::Lang {
+        crate::plan::Lang::parse(self.lang.as_deref())
+    }
+}
+
 fn bad(msg: impl ToString) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, msg.to_string())
 }
@@ -51,13 +62,20 @@ async fn swr_json(
         }
     };
     if let Some(val) = stale {
-        let spawned = state.json_swr_refreshing.lock().unwrap().insert(key.clone());
+        let spawned = state
+            .json_swr_refreshing
+            .lock()
+            .unwrap()
+            .insert(key.clone());
         if spawned {
             let st = state.clone();
             tokio::spawn(async move {
                 match compute(st.clone()).await {
                     Ok(v) => {
-                        st.json_swr_cache.lock().unwrap().insert(key.clone(), (now_ms(), v));
+                        st.json_swr_cache
+                            .lock()
+                            .unwrap()
+                            .insert(key.clone(), (now_ms(), v));
                     }
                     Err(e) => tracing::warn!(key, error = %e, "swr refresh failed"),
                 }
@@ -67,14 +85,16 @@ async fn swr_json(
         return Ok(val);
     }
     let v = compute(state.clone()).await.map_err(internal)?;
-    state.json_swr_cache.lock().unwrap().insert(key, (now_ms(), v.clone()));
+    state
+        .json_swr_cache
+        .lock()
+        .unwrap()
+        .insert(key, (now_ms(), v.clone()));
     Ok(v)
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    env_var(key)
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    env_var(key).and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 fn env_var(key: &str) -> Option<String> {
@@ -138,10 +158,7 @@ fn default_days() -> i64 {
     365
 }
 
-async fn load_klines(
-    state: &AppState,
-    q: &KlineQuery,
-) -> AppResult<(Vec<qcore::Kline>, Interval)> {
+async fn load_klines(state: &AppState, q: &KlineQuery) -> AppResult<(Vec<qcore::Kline>, Interval)> {
     let interval = Interval::parse(&q.interval).ok_or_else(|| bad("bad interval"))?;
     let end = now_ms();
     let start = end - q.days * 86_400_000;
@@ -198,7 +215,11 @@ pub async fn factors(
             .map(|v| if v.is_nan() { None } else { Some(*v) })
             .collect();
         out.insert(
-            serde_json::to_value(kind).unwrap().as_str().unwrap().to_string(),
+            serde_json::to_value(kind)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string(),
             json!(vals),
         );
     }
@@ -339,7 +360,10 @@ fn default_sweep_days() -> i64 {
 }
 
 pub fn default_sweep_symbols() -> Vec<String> {
-    let mut v: Vec<String> = crate::ta_stats::UNIVERSE.iter().map(|s| s.to_string()).collect();
+    let mut v: Vec<String> = crate::ta_stats::UNIVERSE
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     v.extend(["BTCUSDT", "ETHUSDT", "SOLUSDT"].map(String::from));
     v
 }
@@ -437,7 +461,8 @@ pub async fn paper(
                     }
                     if let Some(trades) = obj.get("trades").and_then(|t| t.as_array()) {
                         let n = trades.len();
-                        let tail: Vec<_> = trades.iter().skip(n.saturating_sub(5)).cloned().collect();
+                        let tail: Vec<_> =
+                            trades.iter().skip(n.saturating_sub(5)).cloned().collect();
                         obj.insert("trades".into(), json!(tail));
                     }
                 }
@@ -464,13 +489,23 @@ pub async fn search(Query(q): Query<SearchQuery>) -> AppResult<impl IntoResponse
     Ok(Json(serde_json::to_value(hits).map_err(internal)?))
 }
 
-pub async fn plan(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
-    let plans = crate::plan::cached_plans(&state).await.map_err(internal)?;
+pub async fn plan(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<LangQuery>,
+) -> AppResult<impl IntoResponse> {
+    let plans = crate::plan::cached_plans(&state, q.lang())
+        .await
+        .map_err(internal)?;
     Ok(Json(serde_json::to_value(&*plans).map_err(internal)?))
 }
 
-pub async fn portfolio(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
-    let p = crate::plan::build_portfolio(&state).await.map_err(internal)?;
+pub async fn portfolio(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<LangQuery>,
+) -> AppResult<impl IntoResponse> {
+    let p = crate::plan::build_portfolio(&state, q.lang())
+        .await
+        .map_err(internal)?;
     Ok(Json(p))
 }
 
@@ -501,7 +536,9 @@ pub async fn mine_start(
     let cfg = req.config.unwrap_or_default();
     let (n_sym, n_dates) = (panel.n_symbols(), panel.n_dates());
     crate::mine_job::launch_mine(state.clone(), panel, cfg);
-    Ok(Json(json!({"started": true, "universe": n_sym, "dates": n_dates})))
+    Ok(Json(
+        json!({"started": true, "universe": n_sym, "dates": n_dates}),
+    ))
 }
 
 pub async fn mine_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -524,11 +561,17 @@ pub struct FactorStrategyReq {
 /// 因子库 → 横截面多空策略回测；按留出期切分报告（与挖掘同一 20% 切分）
 pub async fn factor_strategy(
     State(state): State<Arc<AppState>>,
+    Query(q): Query<LangQuery>,
     Json(req): Json<FactorStrategyReq>,
 ) -> AppResult<impl IntoResponse> {
+    let lang = q.lang();
     let lib = crate::mine_job::load_library(&state);
     if lib.is_empty() {
-        return Err(bad("因子库为空，先 POST /api/mine 挖掘"));
+        return Err(bad(if lang.is_zh() {
+            "因子库为空，先 POST /api/mine 挖掘"
+        } else {
+            "Factor library is empty. Run POST /api/mine first."
+        }));
     }
     let panel = crate::mine_job::build_panel(&state, req.days)
         .await
@@ -576,7 +619,11 @@ pub async fn factor_strategy(
         "avg_turnover": result.avg_turnover_per_rebalance,
         "names_per_side": result.names_per_side,
         "equity": equity,
-        "note": "美元中性多空组合(±0.5)，5bp/边成本；metrics_holdout 为挖掘从未接触的最近20%时段"
+        "note": if lang.is_zh() {
+            "美元中性多空组合(±0.5)，5bp/边成本；metrics_holdout 为挖掘从未接触的最近20%时段"
+        } else {
+            "Dollar-neutral long/short portfolio (+/-0.5), 5bp per-side cost. metrics_holdout covers the most recent 20% window never used by mining."
+        }
     })))
 }
 
@@ -604,17 +651,26 @@ fn default_true() -> bool {
 /// 实际计算（600天面板 + 全池打分）秒级 CPU+IO，走 SWR 缓存。
 pub async fn universe_plan(
     State(state): State<Arc<AppState>>,
+    Query(q): Query<LangQuery>,
     Json(req): Json<UniversePlanReq>,
 ) -> AppResult<impl IntoResponse> {
+    let lang = q.lang();
     if crate::mine_job::load_library(&state).is_empty() {
-        return Err(bad("因子库为空，先在因子Lab挖掘"));
+        return Err(bad(if lang.is_zh() {
+            "因子库为空，先在因子Lab挖掘"
+        } else {
+            "Factor library is empty. Run Factor Lab mining first."
+        }));
     }
     let key = format!(
-        "universe_plan|{}|{}|{}",
-        req.k, req.capital_usd, req.include_shorts
+        "universe_plan|{}|{}|{}|{}",
+        lang.key(),
+        req.k,
+        req.capital_usd,
+        req.include_shorts
     );
     let val = swr_json(&state, key, SWR_FRESH_MS, move |st| {
-        Box::pin(async move { universe_plan_value(st, req).await })
+        Box::pin(async move { universe_plan_value(st, req, lang).await })
     })
     .await?;
     Ok(Json(val))
@@ -623,9 +679,18 @@ pub async fn universe_plan(
 async fn universe_plan_value(
     state: Arc<AppState>,
     req: UniversePlanReq,
+    lang: crate::plan::Lang,
 ) -> anyhow::Result<serde_json::Value> {
     let lib = crate::mine_job::load_library(&state);
-    anyhow::ensure!(!lib.is_empty(), "因子库为空，先在因子Lab挖掘");
+    anyhow::ensure!(
+        !lib.is_empty(),
+        "{}",
+        if lang.is_zh() {
+            "因子库为空，先在因子Lab挖掘"
+        } else {
+            "Factor library is empty. Run Factor Lab mining first."
+        }
+    );
     let panel = crate::mine_job::build_panel(&state, 600).await?;
     let exprs: Vec<qmine::Expr> = lib.iter().map(|f| f.ast.clone()).collect();
     let (z, panel) = tokio::task::spawn_blocking(move || {
@@ -636,8 +701,11 @@ async fn universe_plan_value(
 
     // 最近覆盖足够的横截面日期
     let mut t = panel.n_dates() - 1;
-    let count_at =
-        |t: usize| (0..panel.n_symbols()).filter(|s| z[*s][t].is_finite()).count();
+    let count_at = |t: usize| {
+        (0..panel.n_symbols())
+            .filter(|s| z[*s][t].is_finite())
+            .count()
+    };
     while t > 0 && count_at(t) < 10 {
         t -= 1;
     }
@@ -681,7 +749,12 @@ async fn universe_plan_value(
 
     let longs: Vec<&Cand> = cands.iter().filter(|c| c.score > 0.0).take(req.k).collect();
     let shorts: Vec<&Cand> = if req.include_shorts {
-        cands.iter().rev().filter(|c| c.score < 0.0).take(req.k).collect()
+        cands
+            .iter()
+            .rev()
+            .filter(|c| c.score < 0.0)
+            .take(req.k)
+            .collect()
     } else {
         Vec::new()
     };
@@ -693,10 +766,16 @@ async fn universe_plan_value(
 
     // 分数/波动率加权 + 单票 30% 上限
     let make_picks = |side: &str, set: &[&Cand], budget: f64| -> Vec<serde_json::Value> {
-        let raw: Vec<f64> = set.iter().map(|c| c.score.abs() / c.vol_annual.max(0.05)).collect();
+        let raw: Vec<f64> = set
+            .iter()
+            .map(|c| c.score.abs() / c.vol_annual.max(0.05))
+            .collect();
         let total: f64 = raw.iter().sum();
         // capped 权重再归一，保证预算用满且单票≤30%
-        let capped: Vec<f64> = raw.iter().map(|x| (x / total.max(1e-12)).min(0.30)).collect();
+        let capped: Vec<f64> = raw
+            .iter()
+            .map(|x| (x / total.max(1e-12)).min(0.30))
+            .collect();
         let norm: f64 = capped.iter().sum::<f64>().max(1e-12);
         set.iter()
             .zip(&capped)
@@ -713,9 +792,17 @@ async fn universe_plan_value(
                     "shares": shares,
                     "last_close": c.last_close,
                     "option_hint": if side == "long" {
-                        format!("替代表达: BUY CALL |Δ|≈0.35, 到期≥{}天", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                        if lang.is_zh() {
+                            format!("替代表达: BUY CALL |Δ|≈0.35, 到期≥{}天", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                        } else {
+                            format!("Substitute: BUY CALL |Delta|≈0.35, expiry >= {}d", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                        }
                     } else {
-                        format!("替代表达: BUY PUT |Δ|≈0.35, 到期≥{}天", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                        if lang.is_zh() {
+                            format!("替代表达: BUY PUT |Δ|≈0.35, 到期≥{}天", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                        } else {
+                            format!("Substitute: BUY PUT |Delta|≈0.35, expiry >= {}d", (lib[0].horizon as f64 * 1.5).ceil() as i64)
+                        }
                     },
                 })
             })
@@ -729,23 +816,42 @@ async fn universe_plan_value(
         "capital_usd": req.capital_usd,
         "longs": make_picks("long", &longs, long_budget),
         "shorts": make_picks("short", &shorts, short_budget),
-        "sizing_rule": "权重 ∝ 因子分/年化波动（分数强且波动低者多配），单票≤30%，多头60%/空头40%预算",
+        "sizing_rule": if lang.is_zh() {
+            "权重 ∝ 因子分/年化波动（分数强且波动低者多配），单票≤30%，多头60%/空头40%预算"
+        } else {
+            "Weight is proportional to factor score / annualized volatility, capped at 30% per name. When shorts are enabled, budget is 60% long / 40% short."
+        },
         "confidence": {
             "n_factors": lib.len(),
             "avg_holdout_ic": avg_ic,
-            "note": "横截面相对强弱信号（留出IC≈该值）；预测的是组内相对表现，非绝对涨跌"
+            "note": if lang.is_zh() {
+                "横截面相对强弱信号（留出IC≈该值）；预测的是组内相对表现，非绝对涨跌"
+            } else {
+                "Cross-sectional relative-strength signal. Holdout IC is approximately this value; it predicts relative rank inside the universe, not absolute direction."
+            }
         }
     }))
 }
 
 /// F5: 用因子库当前值预测未来 horizon 日的横截面相对强弱（计算同 universe_plan 量级，走 SWR）
-pub async fn factor_forecast(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+pub async fn factor_forecast(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<LangQuery>,
+) -> AppResult<impl IntoResponse> {
+    let lang = q.lang();
     if crate::mine_job::load_library(&state).is_empty() {
-        return Err(bad("因子库为空，先 POST /api/mine 挖掘"));
+        return Err(bad(if lang.is_zh() {
+            "因子库为空，先 POST /api/mine 挖掘"
+        } else {
+            "Factor library is empty. Run POST /api/mine first."
+        }));
     }
-    let val = swr_json(&state, "factor_forecast".into(), SWR_FRESH_MS, move |st| {
-        Box::pin(async move { factor_forecast_value(st).await })
-    })
+    let val = swr_json(
+        &state,
+        format!("factor_forecast|{}", lang.key()),
+        SWR_FRESH_MS,
+        move |st| Box::pin(async move { factor_forecast_value(st, lang).await }),
+    )
     .await?;
     Ok(Json(val))
 }
@@ -756,13 +862,13 @@ pub async fn warm_factor_caches(state: Arc<AppState>) {
     if crate::mine_job::load_library(&state).is_empty() {
         return;
     }
-    match factor_forecast_value(state.clone()).await {
+    match factor_forecast_value(state.clone(), crate::plan::Lang::En).await {
         Ok(v) => {
             state
                 .json_swr_cache
                 .lock()
                 .unwrap()
-                .insert("factor_forecast".into(), (now_ms(), v));
+                .insert("factor_forecast|en".into(), (now_ms(), v));
             tracing::info!("factor_forecast cache warmed");
         }
         Err(e) => tracing::warn!(error = %e, "factor_forecast warmup failed"),
@@ -773,21 +879,39 @@ pub async fn warm_factor_caches(state: Arc<AppState>) {
         include_shorts: true,
     };
     let key = format!(
-        "universe_plan|{}|{}|{}",
-        req.k, req.capital_usd, req.include_shorts
+        "universe_plan|{}|{}|{}|{}",
+        crate::plan::Lang::En.key(),
+        req.k,
+        req.capital_usd,
+        req.include_shorts
     );
-    match universe_plan_value(state.clone(), req).await {
+    match universe_plan_value(state.clone(), req, crate::plan::Lang::En).await {
         Ok(v) => {
-            state.json_swr_cache.lock().unwrap().insert(key, (now_ms(), v));
+            state
+                .json_swr_cache
+                .lock()
+                .unwrap()
+                .insert(key, (now_ms(), v));
             tracing::info!("universe_plan cache warmed");
         }
         Err(e) => tracing::warn!(error = %e, "universe_plan warmup failed"),
     }
 }
 
-async fn factor_forecast_value(state: Arc<AppState>) -> anyhow::Result<serde_json::Value> {
+async fn factor_forecast_value(
+    state: Arc<AppState>,
+    lang: crate::plan::Lang,
+) -> anyhow::Result<serde_json::Value> {
     let lib = crate::mine_job::load_library(&state);
-    anyhow::ensure!(!lib.is_empty(), "因子库为空，先 POST /api/mine 挖掘");
+    anyhow::ensure!(
+        !lib.is_empty(),
+        "{}",
+        if lang.is_zh() {
+            "因子库为空，先 POST /api/mine 挖掘"
+        } else {
+            "Factor library is empty. Run POST /api/mine first."
+        }
+    );
     let panel = crate::mine_job::build_panel(&state, 600).await?;
     let exprs: Vec<qmine::Expr> = lib.iter().map(|f| f.ast.clone()).collect();
     let z = tokio::task::spawn_blocking({
@@ -797,7 +921,11 @@ async fn factor_forecast_value(state: Arc<AppState>) -> anyhow::Result<serde_jso
     .await?;
     // 最新日期可能只有部分标的有bar（盘前/数据时差），向前找覆盖足够的横截面
     let mut t = panel.n_dates() - 1;
-    let count_at = |t: usize| (0..panel.n_symbols()).filter(|s| z[*s][t].is_finite()).count();
+    let count_at = |t: usize| {
+        (0..panel.n_symbols())
+            .filter(|s| z[*s][t].is_finite())
+            .count()
+    };
     while t > 0 && count_at(t) < 10 {
         t -= 1;
     }
@@ -824,11 +952,18 @@ async fn factor_forecast_value(state: Arc<AppState>) -> anyhow::Result<serde_jso
         "confidence": {
             "avg_holdout_ic": avg_ic,
             "n_factors": lib.len(),
-            "interpretation": format!(
-                "留出期日均RankIC≈{:.3}：排序具有统计意义但单期噪声大，\
-                 只宜作横截面相对强弱参考（前1/5 vs 后1/5），不是个股绝对涨跌预测",
-                avg_ic
-            ),
+            "interpretation": if lang.is_zh() {
+                format!(
+                    "留出期日均RankIC≈{:.3}：排序具有统计意义但单期噪声大，\
+                     只宜作横截面相对强弱参考（前1/5 vs 后1/5），不是个股绝对涨跌预测",
+                    avg_ic
+                )
+            } else {
+                format!(
+                    "Holdout daily RankIC is about {:.3}. Ranking has statistical signal, but single-period noise is high. Use it as cross-sectional relative-strength guidance (top quintile vs bottom quintile), not an absolute price forecast.",
+                    avg_ic
+                )
+            },
         },
     }))
 }
@@ -875,11 +1010,10 @@ pub async fn options_backtest(
     // 持有期估计与交易计划一致
     let horizon = crate::plan::spec_horizon_days(&spec);
     let params = req.params.unwrap_or_default();
-    let result = tokio::task::spawn_blocking(move || {
-        crate::optbt::run(&klines, &spec, horizon, &params)
-    })
-    .await
-    .map_err(internal)?;
+    let result =
+        tokio::task::spawn_blocking(move || crate::optbt::run(&klines, &spec, horizon, &params))
+            .await
+            .map_err(internal)?;
     // 抽样曲线
     let step = (result.equity.len() / 2000).max(1);
     let equity: Vec<_> = result.equity.iter().step_by(step).collect();
@@ -892,14 +1026,36 @@ pub async fn options_backtest(
     })))
 }
 
-pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
+fn localize_sector_report(
+    mut val: serde_json::Value,
+    lang: crate::plan::Lang,
+) -> serde_json::Value {
+    let note = if lang.is_zh() {
+        "横截面动量轮动信号（相对强弱+加速度+广度的z分合成），参考 Moskowitz & Grinblatt (1999) 行业动量；非基本面预测"
+    } else {
+        "Cross-sectional momentum rotation signal (relative strength + acceleration + breadth z-score composite), based on Moskowitz & Grinblatt (1999) industry momentum; not a fundamental forecast"
+    };
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert(
+            "method_note".to_string(),
+            serde_json::Value::String(note.to_string()),
+        );
+    }
+    val
+}
+
+pub async fn sectors(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<LangQuery>,
+) -> AppResult<impl IntoResponse> {
+    let lang = q.lang();
     // SWR：新鲜直接回；过期回旧值并后台重算（报告要打几十个 Yahoo 请求，
     // 冷路径 20s+，不能让 HTTP 请求扛）；仅首次冷启动内联算
     let stale = {
         let cache = state.sector_cache.lock().unwrap();
         match cache.as_ref() {
             Some((ts, val)) if now_ms() - ts < crate::sectors::CACHE_TTL_MS => {
-                return Ok(Json(val.clone()))
+                return Ok(Json(localize_sector_report(val.clone(), lang)))
             }
             Some((_, val)) => Some(val.clone()),
             None => None,
@@ -924,12 +1080,14 @@ pub async fn sectors(State(state): State<Arc<AppState>>) -> AppResult<impl IntoR
                     .store(false, std::sync::atomic::Ordering::SeqCst);
             });
         }
-        return Ok(Json(val));
+        return Ok(Json(localize_sector_report(val, lang)));
     }
-    let report = crate::sectors::build_report(&state).await.map_err(internal)?;
+    let report = crate::sectors::build_report(&state)
+        .await
+        .map_err(internal)?;
     let val = serde_json::to_value(&report).map_err(internal)?;
     *state.sector_cache.lock().unwrap() = Some((now_ms(), val.clone()));
-    Ok(Json(val))
+    Ok(Json(localize_sector_report(val, lang)))
 }
 
 #[derive(Deserialize)]
@@ -978,14 +1136,21 @@ pub async fn ta_stats(
     };
     let symbol = q.symbol.as_ref().map(|s| s.to_uppercase());
     if let Some(val) = stale {
-        let spawned = state.json_swr_refreshing.lock().unwrap().insert(cache_key.clone());
+        let spawned = state
+            .json_swr_refreshing
+            .lock()
+            .unwrap()
+            .insert(cache_key.clone());
         if spawned {
             let st = state.clone();
             let interval = q.interval.clone();
             tokio::spawn(async move {
                 match compute(st.clone(), interval, symbol).await {
                     Ok(v) => {
-                        st.ta_stats_cache.lock().unwrap().insert(cache_key.clone(), (now_ms(), v));
+                        st.ta_stats_cache
+                            .lock()
+                            .unwrap()
+                            .insert(cache_key.clone(), (now_ms(), v));
                     }
                     Err(e) => tracing::warn!(cache_key, error = %e, "ta_stats refresh failed"),
                 }
@@ -994,7 +1159,9 @@ pub async fn ta_stats(
         }
         return Ok(Json(val));
     }
-    let val = compute(state.clone(), q.interval.clone(), symbol).await.map_err(bad)?;
+    let val = compute(state.clone(), q.interval.clone(), symbol)
+        .await
+        .map_err(bad)?;
     state
         .ta_stats_cache
         .lock()

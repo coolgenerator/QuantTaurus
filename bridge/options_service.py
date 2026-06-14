@@ -54,6 +54,15 @@ def env(name: str, default: str) -> str:
     return default
 
 
+def parse_lang(qs: dict) -> str:
+    lang = (qs.get("lang") or ["en"])[0].lower()
+    return "zh" if lang in ("zh", "zh-cn", "cn") else "en"
+
+
+def is_zh(lang: str) -> bool:
+    return lang == "zh"
+
+
 OPEND_HOST, OPEND_PORT = "127.0.0.1", 11111
 LISTEN_HOST, LISTEN_PORT = "127.0.0.1", 8788
 SNAPSHOT_BATCH = 380  # 单次快照上限 400，留余量  # 单次快照上限 400，留余量
@@ -330,8 +339,8 @@ def analyze(rows: list[dict], spot: float) -> dict:
 # ====================== 期权交易计划（由股票冠军信号推导） ======================
 
 
-def fetch_stock_plans() -> list[dict]:
-    with urllib.request.urlopen(f"{QT_API}/api/plan", timeout=60) as r:
+def fetch_stock_plans(lang: str = "en") -> list[dict]:
+    with urllib.request.urlopen(f"{QT_API}/api/plan?lang={urllib.parse.quote(lang)}", timeout=60) as r:
         return json.loads(r.read())
 
 
@@ -366,10 +375,10 @@ def pick_contract(chain: dict, direction: int) -> dict | None:
     return min(priced, key=lambda r: abs(r["strike"] - otm)) if priced else None
 
 
-def build_option_plans() -> dict:
+def build_option_plans(lang: str = "en") -> dict:
     plans = []
     stock_plans = sorted(
-        fetch_stock_plans(), key=lambda p: abs(p.get("target_position", 0)), reverse=True
+        fetch_stock_plans(lang), key=lambda p: abs(p.get("target_position", 0)), reverse=True
     )[:12]  # 限频预算：每标的≥2次OpenD调用，12个 ≈ 1.5个30秒窗口
     for sp in stock_plans:
         _yield_to_interactive()
@@ -393,14 +402,38 @@ def build_option_plans() -> dict:
         if qty == 0 and 0 < premium * 100 <= MAX_SINGLE_PREMIUM:
             qty = 1
         flip = sp.get("flip_price")
-        exit_rules = [
-            (
-                f"股票信号反转：现价{'跌破' if direction > 0 else '升破'} "
-                f"{flip:.2f} 时平仓" if flip else "股票信号反转时平仓（每日收盘检查）"
-            ),
-            f"距到期 ≤{CLOSE_DTE} 天无条件平仓（避开 theta/gamma 末期）",
-            f"权利金 {SL_PCT*100:+.0f}% 止损 / {TP_PCT*100:+.0f}% 止盈",
-        ]
+        if is_zh(lang):
+            exit_rules = [
+                (
+                    f"股票信号反转：现价{'跌破' if direction > 0 else '升破'} "
+                    f"{flip:.2f} 时平仓" if flip else "股票信号反转时平仓（每日收盘检查）"
+                ),
+                f"距到期 ≤{CLOSE_DTE} 天无条件平仓（避开 theta/gamma 末期）",
+                f"权利金 {SL_PCT*100:+.0f}% 止损 / {TP_PCT*100:+.0f}% 止盈",
+            ]
+            entry_rule = "信号有效期内买入；建议限价 = 买卖中间价，避免市价单滑点"
+            rationale = (
+                f"标的信号：{sp['rationale']}｜置信度 {sp['confidence']:.0f}({sp['confidence_label']})。"
+                f"期权层：|Δ|≈{abs(contract['delta'] or 0):.2f} 虚值档平衡杠杆与时间损耗；"
+                f"IV {contract['iv'] or 0:.1f}%；到期 {expiry}（{dte(expiry)}天 ≈ 持有期×{HORIZON_BUFFER}）；"
+                f"权利金预算 ${PREMIUM_BUDGET:.0f}/标的（槽位资金 2%，期权可归零故严格限额）"
+            )
+        else:
+            exit_rules = [
+                (
+                    f"Close if the stock signal flips: spot {'falls below' if direction > 0 else 'rises above'} "
+                    f"{flip:.2f}" if flip else "Close when the stock signal flips (checked at each daily close)"
+                ),
+                f"Close unconditionally when DTE <= {CLOSE_DTE} to avoid late theta/gamma risk",
+                f"Premium stop {SL_PCT*100:+.0f}% / take-profit {TP_PCT*100:+.0f}%",
+            ]
+            entry_rule = "Buy while the signal is valid; use a limit near the bid/ask midpoint to reduce market-order slippage"
+            rationale = (
+                f"Underlying signal: {sp['rationale']} | confidence {sp['confidence']:.0f} ({sp['confidence_label']}). "
+                f"Option layer: |delta| around {abs(contract['delta'] or 0):.2f} balances leverage and time decay; "
+                f"IV {contract['iv'] or 0:.1f}%; expiry {expiry} ({dte(expiry)} days, about holding period x {HORIZON_BUFFER}); "
+                f"premium budget ${PREMIUM_BUDGET:.0f} per underlying (2% slot capital; premium can go to zero, so risk is capped strictly)"
+            )
         plans.append({
             "underlying": sym,
             "action": "BUY CALL" if direction > 0 else "BUY PUT",
@@ -415,14 +448,9 @@ def build_option_plans() -> dict:
             "theta": contract["theta"],
             "open_interest": contract["open_interest"],
             "spot": chain.get("spot"),
-            "entry_rule": "信号有效期内买入；建议限价 = 买卖中间价，避免市价单滑点",
+            "entry_rule": entry_rule,
             "exit_rules": exit_rules,
-            "rationale": (
-                f"标的信号：{sp['rationale']}｜置信度 {sp['confidence']:.0f}({sp['confidence_label']})。"
-                f"期权层：|Δ|≈{abs(contract['delta'] or 0):.2f} 虚值档平衡杠杆与时间损耗；"
-                f"IV {contract['iv'] or 0:.1f}%；到期 {expiry}（{dte(expiry)}天 ≈ 持有期×{HORIZON_BUFFER}）；"
-                f"权利金预算 ${PREMIUM_BUDGET:.0f}/标的（槽位资金 2%，期权可归零故严格限额）"
-            ),
+            "rationale": rationale,
             "stock_confidence": sp["confidence"],
             "stock_target": tgt,
         })
@@ -466,7 +494,7 @@ def paper_tick() -> None:
     with _paper_lock:
         st = _paper_load()
         # 用后台预热好的计划缓存；锁内绝不做分钟级的链拉取
-        hit = _cache.get("option_plans")
+        hit = _cache.get("option_plans:en")
         report = hit[1] if hit else {"plans": []}
         plan_by_underlying = {p["underlying"]: p for p in report["plans"]}
 
@@ -544,39 +572,75 @@ def effective_sl(pos: dict) -> float:
     return SL_PCT
 
 
-def _stock_plans_by_symbol() -> dict:
+def _stock_plans_by_symbol(lang: str = "en") -> dict:
     try:
-        return {p["symbol"]: p for p in fetch_stock_plans()}
+        return {p["symbol"]: p for p in fetch_stock_plans(lang)}
     except Exception:  # noqa: BLE001
         return {}
+
+
+def translate_trade_reason(reason: str, lang: str) -> str:
+    if is_zh(lang) or not reason:
+        return reason
+    if reason == "信号开仓":
+        return "Signal entry"
+    if reason == "股票信号反转/消失":
+        return "Stock signal flipped/disappeared"
+    if reason.startswith("距到期≤") and reason.endswith("天"):
+        n = reason.removeprefix("距到期≤").removesuffix("天")
+        return f"DTE <= {n} days"
+    if reason.startswith("止盈"):
+        return f"Take profit {reason.removeprefix('止盈')}"
+    if reason.startswith("止损"):
+        value = reason.removeprefix("止损").replace("(IV自适应)", "")
+        return f"Stop {value} (IV-adaptive)"
+    return reason
 
 
 _paper_state_snap: dict = {}
 
 
-def paper_state() -> dict:
+def paper_state(lang: str = "en") -> dict:
     global _paper_state_snap
     # tick 可能持锁做报价拉取（限频下数秒~数十秒）：等2秒拿不到就回快照，不挂死前端
     if not _paper_lock.acquire(timeout=2):
         if _paper_state_snap:
             return {**_paper_state_snap, "stale": True}
         return {"positions": {}, "history": [], "equity": 1.0, "stale": True,
-                "note": "模拟盘tick进行中，数秒后自动刷新"}
+                "note": "模拟盘tick进行中，数秒后自动刷新" if is_zh(lang) else "Paper tick is running; this view will refresh in a few seconds"}
     try:
         st = _paper_load()
     finally:
         _paper_lock.release()
     # 动态退出参数（读取时实时计算，不落盘）
-    plans = _stock_plans_by_symbol()
+    plans = _stock_plans_by_symbol(lang)
+    option_hit = _cache.get(f"option_plans:{lang}")
+    option_plans = {
+        p["underlying"]: p
+        for p in (option_hit[1].get("plans", []) if option_hit else [])
+    }
     for und, pos in st.get("positions", {}).items():
         sl = effective_sl(pos)
         entry = pos["entry_premium"]
         sp = plans.get(und) or {}
+        op = option_plans.get(und)
+        if op:
+            pos["rationale"] = op["rationale"]
         horizon = sp.get("horizon_days") or 10
         # 动态预计售出 = min(到期-CLOSE_DTE, 建仓 + 信号持有期×1.5)
         y, m_, d_ = map(int, pos["expiry"].split("-"))
         hard_close = time.mktime((y, m_, d_, 0, 0, 0, 0, 0, -1)) * 1000 - CLOSE_DTE * 86_400_000
         signal_exit = pos["entry_ms"] + int(horizon * 1.5) * 86_400_000
+        if is_zh(lang):
+            rules_note = (
+                f"止盈{TP_PCT:+.0%} / 止损{sl:+.0%}(IV自适应) / "
+                f"标的跌穿反转价平仓 / 到期前{CLOSE_DTE}天强平 —— 参数可经环境变量调整"
+            )
+        else:
+            rules_note = (
+                f"Take profit {TP_PCT:+.0%} / stop {sl:+.0%} (IV-adaptive) / "
+                f"close on underlying flip / force-close {CLOSE_DTE} days before expiry - configurable via env vars"
+            )
         pos["exit_dynamic"] = {
             "tp_premium": entry * (1 + TP_PCT),
             "sl_premium": entry * (1 + sl),
@@ -586,11 +650,11 @@ def paper_state() -> dict:
             "underlying_last": sp.get("last_close"),
             "planned_exit_ms": int(min(hard_close, signal_exit)),
             "hard_close_ms": int(hard_close),
-            "rules_note": (
-                f"止盈{TP_PCT:+.0%} / 止损{sl:+.0%}(IV自适应) / "
-                f"标的跌穿反转价平仓 / 到期前{CLOSE_DTE}天强平 —— 参数可经环境变量调整"
-            ),
+            "rules_note": rules_note,
         }
+    if not is_zh(lang):
+        for trade in st.get("trades", []):
+            trade["reason"] = translate_trade_reason(str(trade.get("reason") or ""), lang)
     _paper_state_snap = st
     return st
 
@@ -790,15 +854,19 @@ class Handler(BaseHTTPRequestHandler):
                 with interactive_request():
                     self._send(200, cached(f"chain:{symbol}:{expiry}", lambda: fetch_chain(symbol, expiry)))
             elif parsed.path == "/plans":
-                hit = _cache.get("option_plans")
+                lang = parse_lang(qs)
+                hit = _cache.get(f"option_plans:{lang}")
                 if hit:
                     self._send(200, hit[1])
                 else:
                     self._send(200, {"plans": [], "warming_up": True,
-                                     "note": "期权计划后台预热中（OpenD限频，约1-2分钟）"})
+                                     "note": "期权计划后台预热中（OpenD限频，约1-2分钟）"
+                                     if is_zh(lang)
+                                     else "Option plans are warming up in the background (OpenD rate limit, about 1-2 minutes)"})
             elif parsed.path == "/paper-options":
+                lang = parse_lang(qs)
                 with interactive_request():
-                    self._send(200, paper_state())
+                    self._send(200, paper_state(lang))
             elif parsed.path == "/account":
                 with interactive_request():
                     self._send(200, cached("account", fetch_account, ttl=ACCOUNT_TTL))
@@ -842,8 +910,9 @@ def plans_refresher():
     """后台预热期权计划：HTTP 请求永远直接读缓存（秒回），重活在这条线程里干。"""
     while True:
         try:
-            val = build_option_plans()
-            _cache["option_plans"] = (time.time(), val)
+            for lang in ("en", "zh"):
+                val = build_option_plans(lang)
+                _cache[f"option_plans:{lang}"] = (time.time(), val)
             _prewarm_expirations()
         except Exception:
             log.exception("plans refresh failed (will retry)")

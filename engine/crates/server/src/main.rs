@@ -45,11 +45,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState::new(&data_dir)?);
 
     // 启动实时行情流（默认主流币）
-    state.start_market_stream(vec![
-        "BTCUSDT".into(),
-        "ETHUSDT".into(),
-        "SOLUSDT".into(),
-    ]);
+    state.start_market_stream(vec!["BTCUSDT".into(), "ETHUSDT".into(), "SOLUSDT".into()]);
 
     // 统计缓存预热：重启清空内存缓存后，后台先算好 1d 规则统计（~10s），
     // 避免技术分析页首开撞冷缓存
@@ -78,9 +74,17 @@ async fn main() -> anyhow::Result<()> {
         let st = state.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            match plan::cached_plans(&st).await {
-                Ok(p) => tracing::info!(slots = p.len(), "trade plans cache warmed"),
-                Err(e) => tracing::warn!(error = %e, "trade plans warmup failed"),
+            for lang in [plan::Lang::En, plan::Lang::Zh] {
+                match plan::cached_plans(&st, lang).await {
+                    Ok(p) => tracing::info!(
+                        slots = p.len(),
+                        lang = lang.key(),
+                        "trade plans cache warmed"
+                    ),
+                    Err(e) => {
+                        tracing::warn!(error = %e, lang = lang.key(), "trade plans warmup failed")
+                    }
+                }
             }
         });
     }
@@ -230,7 +234,12 @@ fn spawn_auto_retrain(state: Arc<AppState>) {
                     let (bpy, cost) = routes::market_params(&symbol, interval);
                     cfg.bars_per_year = bpy;
                     cfg.cost = cost;
-                    tracing::info!(symbol, interval_s, bars = klines.len(), "auto-retrain starting");
+                    tracing::info!(
+                        symbol,
+                        interval_s,
+                        bars = klines.len(),
+                        "auto-retrain starting"
+                    );
                     state::launch_evolve(
                         state.clone(),
                         symbol.clone(),
@@ -273,15 +282,16 @@ fn spawn_stock_quote_poller(state: Arc<AppState>) {
                 match yahoo.last_price(&sym).await {
                     Ok((t, price)) => {
                         let time = if t > 0 { t } else { state::now_ms() };
-                        let _ = state.ws_tx.send(state::WsMessage::Market(
-                            qcore::MarketEvent::Trade {
-                                symbol: sym,
-                                time,
-                                price,
-                                qty: 0.0,
-                                is_buyer_maker: false,
-                            },
-                        ));
+                        let _ =
+                            state
+                                .ws_tx
+                                .send(state::WsMessage::Market(qcore::MarketEvent::Trade {
+                                    symbol: sym,
+                                    time,
+                                    price,
+                                    qty: 0.0,
+                                    is_buyer_maker: false,
+                                }));
                     }
                     Err(e) => tracing::debug!(sym, error = %e, "quote poll failed"),
                 }

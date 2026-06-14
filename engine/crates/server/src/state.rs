@@ -89,7 +89,7 @@ pub struct AppState {
     /// 板块报告后台刷新进行中标记（防重复 spawn）
     pub sectors_refreshing: AtomicBool,
     /// 交易计划 SWR 缓存：过期回旧值+后台刷新，HTTP 请求不再扛 Yahoo 串行尾刷
-    pub plans_cache: Mutex<Option<(i64, Arc<Vec<crate::plan::TradePlan>>)>>,
+    pub plans_cache: Mutex<HashMap<String, (i64, Arc<Vec<crate::plan::TradePlan>>)>>,
     /// 计划重算互斥：冷启动并发去重 + 后台刷新串行化
     pub plans_compute: tokio::sync::Mutex<()>,
     pub plans_refreshing: AtomicBool,
@@ -143,7 +143,7 @@ impl AppState {
             paper: Mutex::new(paper),
             sector_cache: Mutex::new(None),
             sectors_refreshing: AtomicBool::new(false),
-            plans_cache: Mutex::new(None),
+            plans_cache: Mutex::new(HashMap::new()),
             plans_compute: tokio::sync::Mutex::new(()),
             plans_refreshing: AtomicBool::new(false),
             json_swr_cache: Mutex::new(HashMap::new()),
@@ -280,8 +280,11 @@ pub fn launch_sweep(
             return;
         };
         for sym in symbols {
-            if let SweepStatus::Running { current, results: r, .. } =
-                &mut *state.sweep_status.lock().unwrap()
+            if let SweepStatus::Running {
+                current,
+                results: r,
+                ..
+            } = &mut *state.sweep_status.lock().unwrap()
             {
                 *current = sym.clone();
                 *r = results.clone();

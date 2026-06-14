@@ -146,15 +146,18 @@ function SectorRow({
   expanded,
   onToggle,
   onSelectSymbol,
+  lang,
   t,
 }: {
   sector: SectorStat
   expanded: boolean
   onToggle: () => void
   onSelectSymbol: (symbol: string) => void
+  lang: 'en' | 'zh'
   t: (key: string, vars?: Record<string, string | number>) => string
 }) {
   const label = LABEL_STYLES[sector.label] ?? LABEL_STYLES.neutral
+  const sectorName = lang === 'zh' ? sector.name_zh : sector.name_en
   return (
     <div
       className={`rounded-xl border bg-black/20 transition hover:bg-white/5 ${
@@ -176,7 +179,7 @@ function SectorRow({
             {sector.rank}
           </span>
           <div>
-            <p className="text-sm font-bold text-slate-200">{sector.name_zh}</p>
+            <p className="text-sm font-bold text-slate-200">{sectorName}</p>
             <span className={`badge mt-0.5 ${label.cls}`}>{t(label.textKey)}</span>
           </div>
         </div>
@@ -281,6 +284,8 @@ export default function SectorPanel({ onSelectSymbol }: Props) {
   const sectors = report ? [...report.sectors].sort((a, b) => a.rank - b.rank) : []
   const leader = sectors.find((s) => s.label === 'leader') ?? sectors[0]
   const emerging = sectors.find((s) => s.label === 'emerging')
+  const sectorName = (sector: SectorStat | undefined) =>
+    sector ? (lang === 'zh' ? sector.name_zh : sector.name_en) : '—'
   const spy3m = report ? logToSimple(report.benchmark.mom_3m) : null
 
   return (
@@ -317,14 +322,14 @@ export default function SectorPanel({ onSelectSymbol }: Props) {
           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-white/10 bg-gradient-to-r from-cyan-500/10 via-transparent to-violet-500/10 px-4 py-2.5 text-sm">
             <span className="text-slate-400">
               {t('sector.currentLeader')}{' '}
-              <span className="font-bold text-neon-cyan">{leader ? leader.name_zh : '—'}</span>
+              <span className="font-bold text-neon-cyan">{sectorName(leader)}</span>
             </span>
             <span className="hidden text-slate-700 sm:inline">·</span>
             {emerging ? (
               <span className="text-slate-400">
                 {t('sector.nextHotspot')}{' '}
                 <span className="font-bold text-neon-purple drop-shadow-[0_0_8px_rgba(167,139,250,0.7)]">
-                  {emerging.name_zh}
+                  {sectorName(emerging)}
                 </span>
               </span>
             ) : (
@@ -352,6 +357,7 @@ export default function SectorPanel({ onSelectSymbol }: Props) {
                 expanded={expandedKey === s.key}
                 onToggle={() => setExpandedKey((k) => (k === s.key ? null : s.key))}
                 onSelectSymbol={onSelectSymbol}
+                lang={lang}
                 t={t}
               />
             ))}

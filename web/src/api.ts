@@ -316,7 +316,7 @@ export interface TradePlan {
   decision_interval_label: string
   /** Signal confidence in [0, 100]. */
   confidence: number
-  confidence_label: '高' | '中' | '低'
+  confidence_label: '高' | '中' | '低' | 'High' | 'Medium' | 'Low'
   /** Human-readable decision rationale. */
   rationale: string
   /** Statistical target zone (±1σ·√N days); null when unavailable. */
@@ -407,6 +407,7 @@ export type SectorLabel = 'leader' | 'emerging' | 'neutral' | 'laggard'
 export interface SectorStat {
   key: string
   name_zh: string
+  name_en: string
   rank: number
   label: SectorLabel
   /** z-score composite, roughly -6..+6. */
@@ -832,8 +833,9 @@ export interface UniversePlanRequest {
 export async function fetchUniversePlan(body: UniversePlanRequest = {}): Promise<UniversePlan> {
   // 只读计算型 POST，按 url+body 去重（通用 postJson 含有副作用的调用，不能去重）
   const payload = JSON.stringify(body)
-  return dedupJson(`POST /api/universe_plan|${payload}`, async () => {
-    const res = await fetch('/api/universe_plan', {
+  const url = urlWithLang('/api/universe_plan')
+  return dedupJson(`POST ${url}|${payload}`, async () => {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
@@ -841,7 +843,7 @@ export async function fetchUniversePlan(body: UniversePlanRequest = {}): Promise
     })
     if (!res.ok) {
       const text = (await res.text()).trim()
-      throw new Error(text || `POST /api/universe_plan failed: ${res.status} ${res.statusText}`)
+      throw new Error(text || `POST ${url} failed: ${res.status} ${res.statusText}`)
     }
     return (await res.json()) as UniversePlan
   })
@@ -904,6 +906,20 @@ const REQUEST_TIMEOUT_MS = 30_000
 const inflightReqs = new Map<string, Promise<unknown>>()
 const recentResults = new Map<string, { ts: number; data: unknown }>()
 
+function currentApiLang(): 'en' | 'zh' {
+  try {
+    return window.localStorage.getItem('qt.lang') === 'zh' ? 'zh' : 'en'
+  } catch {
+    return 'en'
+  }
+}
+
+function urlWithLang(url: string): string {
+  if (!url.startsWith('/api/') && !url.startsWith('/opt-api/')) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}lang=${encodeURIComponent(currentApiLang())}`
+}
+
 function dedupJson<T>(key: string, doFetch: () => Promise<T>): Promise<T> {
   const hit = recentResults.get(key)
   if (hit && Date.now() - hit.ts < DEDUP_TTL_MS) return Promise.resolve(hit.data as T)
@@ -923,20 +939,22 @@ function dedupJson<T>(key: string, doFetch: () => Promise<T>): Promise<T> {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  return dedupJson(url, async () => {
-    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-    if (!res.ok) throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}`)
+  const finalUrl = urlWithLang(url)
+  return dedupJson(finalUrl, async () => {
+    const res = await fetch(finalUrl, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+    if (!res.ok) throw new Error(`GET ${finalUrl} failed: ${res.status} ${res.statusText}`)
     return (await res.json()) as T
   })
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+  const finalUrl = urlWithLang(url)
+  const res = await fetch(finalUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`POST ${url} failed: ${res.status} ${res.statusText}`)
+  if (!res.ok) throw new Error(`POST ${finalUrl} failed: ${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }
 

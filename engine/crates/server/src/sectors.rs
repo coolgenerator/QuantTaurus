@@ -18,6 +18,7 @@ use std::sync::Arc;
 pub struct SectorDef {
     pub key: &'static str,
     pub name_zh: &'static str,
+    pub name_en: &'static str,
     pub tickers: &'static [&'static str],
 }
 
@@ -26,31 +27,37 @@ pub const SECTORS: &[SectorDef] = &[
     SectorDef {
         key: "mega_tech",
         name_zh: "大型科技",
+        name_en: "Mega-cap Tech",
         tickers: &["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"],
     },
     SectorDef {
         key: "semis",
         name_zh: "半导体/芯片",
+        name_en: "Semiconductors / Chips",
         tickers: &["NVDA", "AMD", "AVGO", "TSM", "INTC", "QCOM", "ARM", "MRVL"],
     },
     SectorDef {
         key: "memory_storage",
         name_zh: "内存/存储",
+        name_en: "Memory / Storage",
         tickers: &["MU", "WDC", "STX", "SNDK"],
     },
     SectorDef {
         key: "ai_infra",
         name_zh: "AI 基建/算力",
+        name_en: "AI Infrastructure / Compute",
         tickers: &["SMCI", "DELL", "VRT", "ANET", "ORCL", "PLTR", "CRWV"],
     },
     SectorDef {
         key: "semi_equipment",
         name_zh: "半导体设备/供应链",
+        name_en: "Semiconductor Equipment / Supply Chain",
         tickers: &["ASML", "AMAT", "LRCX", "KLAC", "TER"],
     },
     SectorDef {
         key: "ai_power",
         name_zh: "AI 电力/数据中心能源",
+        name_en: "AI Power / Data Center Energy",
         tickers: &["VST", "CEG", "GEV"],
     },
 ];
@@ -76,6 +83,7 @@ pub struct TickerStat {
 pub struct SectorStat {
     pub key: String,
     pub name_zh: String,
+    pub name_en: String,
     pub tickers: Vec<TickerStat>,
     pub avg_mom_1m: f64,
     pub avg_mom_3m: f64,
@@ -193,6 +201,7 @@ pub async fn build_report(state: &Arc<AppState>) -> anyhow::Result<SectorReport>
         sectors.push(SectorStat {
             key: def.key.to_string(),
             name_zh: def.name_zh.to_string(),
+            name_en: def.name_en.to_string(),
             tickers: stats,
             avg_mom_1m: avg_1m,
             avg_mom_3m: avg_3m,
