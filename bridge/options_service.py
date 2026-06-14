@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """期权数据/分析服务：moomoo OpenD → HTTP JSON。
 
-QuantHaHa 前端期权分析 Tab 的数据后端。Rust server 不直接说 OpenD 的
+QuantTaurus 前端期权分析 Tab 的数据后端。Rust server 不直接说 OpenD 的
 protobuf 协议，这个 sidecar 用 futu-api 取期权链 + 快照（IV/希腊字母/
 未平仓量），并计算 Put/Call 比、最大痛点 (Max Pain)、IV 微笑等分析。
 

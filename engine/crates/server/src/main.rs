@@ -1,4 +1,4 @@
-//! QuantHaHa API 服务：REST + WebSocket。
+//! QuantTaurus API 服务：REST + WebSocket。
 //!
 //! 端点：
 //!   GET  /api/klines?symbol=BTCUSDT&interval=1h&days=365

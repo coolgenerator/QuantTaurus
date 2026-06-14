@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.quanthaha.server</string>
+    <string>com.quanttaurus.server</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/jason/Documents/Github/QuantHaHa/engine/target/release/server</string>
@@ -15,8 +15,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/qhh-server.log</string>
+    <string>/tmp/qt-server.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/qhh-server.log</string>
+    <string>/tmp/qt-server.log</string>
 </dict>
 </plist>

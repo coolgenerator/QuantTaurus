@@ -268,7 +268,7 @@ export default function App() {
       )}
 
       <footer className="pb-2 text-center text-xs text-slate-600">
-        QuantHaHa · for research only · not financial advice
+        QuantTaurus · for research only · not financial advice
       </footer>
     </div>
   )

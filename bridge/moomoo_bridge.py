@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""QuantHaHa → moomoo 模拟盘桥接器。
+"""QuantTaurus → moomoo 模拟盘桥接器。
 
-把 QuantHaHa 注册表冠军的目标仓位同步到 moomoo (Futu) 模拟交易账户：
+把 QuantTaurus 注册表冠军的目标仓位同步到 moomoo (Futu) 模拟交易账户：
 每 POLL_SEC 秒读取 /api/paper 的各会话目标仓位，与 moomoo 模拟账户
 当前持仓对比，差额超过阈值就以市价单补齐。
 

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.quanthaha.collector</string>
+    <string>com.quanttaurus.collector</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/env</string>
@@ -15,8 +15,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/qhh-collector.log</string>
+    <string>/tmp/qt-collector.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/qhh-collector.log</string>
+    <string>/tmp/qt-collector.log</string>
 </dict>
 </plist>

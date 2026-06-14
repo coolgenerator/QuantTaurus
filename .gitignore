@@ -6,3 +6,17 @@ web/dist/
 .DS_Store
 *.log
 __pycache__/
+.env
+.env.*
+!.env.example
+.claude/
+.vscode/
+.idea/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.pem
+*.key
+*.p12

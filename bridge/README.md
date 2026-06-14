@@ -1,6 +1,6 @@
 # moomoo 模拟盘桥接
 
-把 QuantHaHa 冠军策略的目标仓位自动同步到你的 moomoo 模拟交易账户。
+把 QuantTaurus 冠军策略的目标仓位自动同步到你的 moomoo 模拟交易账户。
 
 ## 一次性设置
 
@@ -8,7 +8,7 @@
    https://www.moomoo.com/download/OpenAPI
    下载后启动并用你的 moomoo 账号登录（默认监听 `127.0.0.1:11111`）
 2. **安装 SDK**：`pip install futu-api requests`
-3. QuantHaHa server 在跑（`:8787`）
+3. QuantTaurus server 在跑（`:8787`）
 
 ## 运行
 
@@ -32,8 +32,8 @@ python3 bridge/moomoo_bridge.py
 ## 服务器开机自启（可选）
 
 ```bash
-cp deploy/com.quanthaha.server.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.quanthaha.server.plist
+cp deploy/com.quanttaurus.server.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.quanttaurus.server.plist
 ```
 
 之后 server 开机自动运行、崩溃自动拉起，模拟盘在每个交易日开盘时段

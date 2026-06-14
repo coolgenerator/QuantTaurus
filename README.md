@@ -1,4 +1,4 @@
-# QuantHaHa — 全栈量化交易平台
+# QuantTaurus — 全栈量化交易平台
 
 低延迟量化交易研究与执行平台：Rust 核心引擎 + React 实时可视化前端。
 
