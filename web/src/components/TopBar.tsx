@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react'
 import { searchSymbols, type SearchHit } from '../api'
+import { useI18n, type Lang } from '../i18n'
 import { useWsStatus } from '../ws'
 
-export const SYMBOL_GROUPS = {
-  '指数/ETF': ['SPY', 'QQQ', 'SMH', 'SOXX', '^GSPC', '^IXIC', '^VIX'],
-  大型科技: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA'],
-  '半导体/芯片': ['NVDA', 'AMD', 'AVGO', 'TSM', 'INTC', 'QCOM', 'ARM', 'MRVL'],
-  '内存/存储': ['MU', 'WDC', 'STX', 'SNDK'],
-  'AI 基建/算力': ['SMCI', 'DELL', 'VRT', 'ANET', 'ORCL', 'PLTR', 'CRWV'],
-  半导体设备: ['ASML', 'AMAT', 'LRCX', 'KLAC', 'TER'],
-  'AI 电力': ['VST', 'CEG', 'GEV'],
-  Crypto: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
-} as const
+const SYMBOL_GROUPS = [
+  { key: 'topbar.groups.index', symbols: ['SPY', 'QQQ', 'SMH', 'SOXX', '^GSPC', '^IXIC', '^VIX'] },
+  { key: 'topbar.groups.megacap', symbols: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA'] },
+  { key: 'topbar.groups.semiconductors', symbols: ['NVDA', 'AMD', 'AVGO', 'TSM', 'INTC', 'QCOM', 'ARM', 'MRVL'] },
+  { key: 'topbar.groups.memory', symbols: ['MU', 'WDC', 'STX', 'SNDK'] },
+  { key: 'topbar.groups.aiInfra', symbols: ['SMCI', 'DELL', 'VRT', 'ANET', 'ORCL', 'PLTR', 'CRWV'] },
+  { key: 'topbar.groups.semiEquipment', symbols: ['ASML', 'AMAT', 'LRCX', 'KLAC', 'TER'] },
+  { key: 'topbar.groups.aiPower', symbols: ['VST', 'CEG', 'GEV'] },
+  { key: 'Crypto', symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] },
+] as const
 export const INTERVALS = ['1m', '5m', '30m', '1h', '2h', '4h', '1d', '1w', '1mo'] as const
 
 export const isCrypto = (s: string) => s.endsWith('USDT')
@@ -32,6 +33,7 @@ const QUOTE_TYPE_STYLE: Record<SearchHit['quote_type'], string> = {
  * 选中（点击/回车）调 onSelect；Esc/失焦恢复显示态不改值。
  */
 function SymbolPicker({ value, onSelect }: { value: string; onSelect: (symbol: string) => void }) {
+  const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [q, setQ] = useState('')
   /** 聚焦后用户是否真正修改过输入（聚焦时预填当前 symbol，不算查询） */
@@ -135,7 +137,7 @@ function SymbolPicker({ value, onSelect }: { value: string; onSelect: (symbol: s
         onFocus={onFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
-        placeholder="搜索代码/公司名…"
+        placeholder={t('topbar.searchPlaceholder')}
         className={`input-dark w-[220px] pr-8 font-mono font-bold ${
           editing ? 'text-slate-100' : 'text-neon-cyan'
         }`}
@@ -156,13 +158,13 @@ function SymbolPicker({ value, onSelect }: { value: string; onSelect: (symbol: s
           onMouseDown={(e) => e.preventDefault()}
           className={`${overlayCls} max-h-96 w-[340px] overflow-y-auto p-3`}
         >
-          {Object.entries(SYMBOL_GROUPS).map(([group, syms]) => (
-            <div key={group} className="mb-2.5 last:mb-0">
+          {SYMBOL_GROUPS.map((group) => (
+            <div key={group.key} className="mb-2.5 last:mb-0">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                {group}
+                {group.key === 'Crypto' ? 'Crypto' : t(group.key)}
               </p>
               <div className="flex flex-wrap gap-1">
-                {syms.map((s) => (
+                {group.symbols.map((s) => (
                   <button
                     key={s}
                     onClick={() => pick(s)}
@@ -215,6 +217,35 @@ function SymbolPicker({ value, onSelect }: { value: string; onSelect: (symbol: s
   )
 }
 
+function LanguageSwitch() {
+  const { lang, setLang, t } = useI18n()
+  const choices: { key: Lang; label: string }[] = [
+    { key: 'en', label: 'EN' },
+    { key: 'zh', label: 'ZH' },
+  ]
+  return (
+    <div
+      className="flex items-center overflow-hidden rounded-lg border border-white/10"
+      aria-label={t('topbar.langLabel')}
+      title={t('topbar.langLabel')}
+    >
+      {choices.map((choice) => (
+        <button
+          key={choice.key}
+          onClick={() => setLang(choice.key)}
+          className={`px-2.5 py-1.5 text-xs font-bold transition ${
+            lang === choice.key
+              ? 'bg-neon-cyan/15 text-neon-cyan'
+              : 'text-slate-500 hover:bg-white/5 hover:text-slate-200'
+          }`}
+        >
+          {choice.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 interface Props {
   symbol: string
   interval: string
@@ -224,16 +255,17 @@ interface Props {
 }
 
 export default function TopBar({ symbol, interval, onSymbolChange, onIntervalChange }: Props) {
+  const { t } = useI18n()
   const status = useWsStatus()
   const intervals = intervalsFor(symbol)
 
   return (
     <header className="glass-card sticky top-3 z-50 mx-auto flex items-center gap-4 px-5 py-3">
       <h1 className="neon-title text-2xl tracking-tight">
-        Quant<span className="opacity-90">HaHa</span>
+        Quant<span className="opacity-90">Taurus</span>
       </h1>
       <span className="hidden text-xs uppercase tracking-[0.3em] text-slate-500 sm:inline">
-        alpha lab
+        {t('topbar.tagline')}
       </span>
 
       <div className="ml-auto flex items-center gap-3">
@@ -269,6 +301,8 @@ export default function TopBar({ symbol, interval, onSymbolChange, onIntervalCha
             {status === 'open' ? 'live' : status}
           </span>
         </div>
+
+        <LanguageSwitch />
       </div>
     </header>
   )

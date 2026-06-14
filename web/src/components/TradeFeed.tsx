@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { fmtNum, type WsTradeMsg } from '../api'
+import { useI18n } from '../i18n'
 import { useWsMessages } from '../ws'
 
 const MAX_TRADES = 50
@@ -11,6 +12,7 @@ interface TradeRow extends WsTradeMsg {
 let nextId = 0
 
 export default function TradeFeed({ symbol }: { symbol: string }) {
+  const { t } = useI18n()
   const [trades, setTrades] = useState<TradeRow[]>([])
 
   useWsMessages((msg) => {
@@ -23,9 +25,9 @@ export default function TradeFeed({ symbol }: { symbol: string }) {
   return (
     <section className="glass-card p-4">
       <div className="mb-2 flex items-center gap-3">
-        <h2 className="panel-title">Market Feed · 全市场成交</h2>
+        <h2 className="panel-title">{t('feed.title')}</h2>
         <span className="font-mono text-xs text-slate-500">{trades.length} / {MAX_TRADES}</span>
-        <span className="text-[10px] text-slate-600">交易所行情直播，非本系统交易（系统调仓见 Paper Trading 面板）</span>
+        <span className="text-[10px] text-slate-600">{t('feed.subtitle')}</span>
         <span className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-wider text-slate-500">
           <span className="inline-block h-2 w-2 rounded-full bg-neon-green" /> buy
           <span className="ml-2 inline-block h-2 w-2 rounded-full bg-neon-red" /> sell
@@ -34,7 +36,7 @@ export default function TradeFeed({ symbol }: { symbol: string }) {
       <div className="h-48 overflow-y-auto pr-1">
         {trades.length === 0 && (
           <p className="py-10 text-center text-sm text-slate-600">
-            waiting for trades on the wire…
+            {t('feed.waiting')}
           </p>
         )}
         <ul className="space-y-1 font-mono text-xs">

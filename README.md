@@ -2,7 +2,7 @@
 
 [Chinese](README.zh-CN.md)
 
-QuantTaurus is a local-first quant research platform. The Rust engine handles market data caching, factor calculation, backtesting, strategy evolution, and paper trading. The React dashboard provides charts, factor research panels, backtest results, champion strategy tracking, trade plans, and portfolio views.
+QuantTaurus is a local-first quant research platform. The Rust engine handles market data caching, factor calculation, backtesting, strategy evolution, and paper trading. The React dashboard provides charts, factor research panels, backtest results, champion strategy tracking, trade plans, and portfolio views. The dashboard supports English and Chinese through a top-bar language switcher.
 
 > Research and paper trading only. This project is not investment advice and is not a complete production trading risk system.
 

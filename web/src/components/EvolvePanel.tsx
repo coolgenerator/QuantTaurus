@@ -6,6 +6,7 @@ import {
   type EvolveReport,
   type EvolveStatus,
 } from '../api'
+import { useI18n } from '../i18n'
 import { useWsMessages } from '../ws'
 
 interface Props {
@@ -77,6 +78,7 @@ function specKind(spec: unknown): string {
 }
 
 function Report({ report }: { report: EvolveReport }) {
+  const { t } = useI18n()
   const population = [...report.final_population].sort(
     (a, b) => (b.valid_metrics?.sharpe ?? -Infinity) - (a.valid_metrics?.sharpe ?? -Infinity),
   )
@@ -85,15 +87,15 @@ function Report({ report }: { report: EvolveReport }) {
       <div>
         <div className="mb-1 flex items-center justify-between">
           <p className="text-[10px] uppercase tracking-wider text-slate-500">
-            fitness curve · {report.total_evaluations} evals
+            {t('evolve.fitness', { evals: report.total_evaluations })}
           </p>
           {report.promoted ? (
             <span className="badge border border-neon-green/40 bg-neon-green/10 text-neon-green">
-              ★ PROMOTED
+              ★ {t('evolve.promoted')}
             </span>
           ) : (
             <span className="badge border border-white/15 bg-white/5 text-slate-400">
-              not promoted
+              {t('evolve.notPromoted')}
             </span>
           )}
         </div>
@@ -163,6 +165,7 @@ function Report({ report }: { report: EvolveReport }) {
 }
 
 export default function EvolvePanel({ symbol, interval }: Props) {
+  const { t } = useI18n()
   const [status, setStatus] = useState<EvolveStatus>({ status: 'idle' })
   const [error, setError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -226,7 +229,7 @@ export default function EvolvePanel({ symbol, interval }: Props) {
   return (
     <section className="glass-card flex max-h-[640px] flex-col p-4">
       <div className="mb-3 flex items-center gap-3">
-        <h2 className="panel-title">Strategy Evolution</h2>
+        <h2 className="panel-title">{t('evolve.title')}</h2>
         <span
           className={`badge ml-1 border ${
             running
@@ -241,7 +244,7 @@ export default function EvolvePanel({ symbol, interval }: Props) {
           {status.status}
         </span>
         <button className="btn-neon ml-auto" onClick={start} disabled={running}>
-          {running ? 'Evolving…' : '启动进化'}
+          {running ? t('evolve.running') : t('evolve.start')}
         </button>
       </div>
 
@@ -262,7 +265,7 @@ export default function EvolvePanel({ symbol, interval }: Props) {
             <div className="absolute inset-[26px] rounded-full bg-gradient-to-r from-cyan-400 to-violet-400 opacity-80" />
           </div>
           <p className="animate-shimmer bg-gradient-to-r from-slate-500 via-slate-200 to-slate-500 bg-[length:200%_100%] bg-clip-text text-sm font-medium text-transparent">
-            evolving strategies · natural selection in progress
+            {t('evolve.progress')}
           </p>
         </div>
       )}
@@ -271,7 +274,7 @@ export default function EvolvePanel({ symbol, interval }: Props) {
 
       {!running && !status.report && !error && (
         <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          Launch an evolution run to breed a champion strategy.
+          {t('evolve.empty')}
         </div>
       )}
     </section>

@@ -8,6 +8,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { fetchKlines, fmtNum, toUnixSec, type Kline } from '../api'
+import { useI18n } from '../i18n'
 import { useWsMessages } from '../ws'
 
 interface Props {
@@ -50,6 +51,7 @@ function klineToVolume(k: Kline) {
 }
 
 export default function PriceChart({ symbol, interval }: Props) {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -207,13 +209,15 @@ export default function PriceChart({ symbol, interval }: Props) {
     <section className="glass-card relative flex h-[440px] flex-col p-4">
       <div className="mb-2 flex items-start justify-between">
         <div>
-          <h2 className="panel-title">Market</h2>
+          <h2 className="panel-title">{t('chart.market')}</h2>
           <p className="font-mono text-lg font-bold text-slate-100">
             {symbol} <span className="text-sm font-medium text-slate-500">· {interval}</span>
           </p>
         </div>
         <div className="text-right">
-          <p className="text-[10px] uppercase tracking-widest text-slate-500">last price</p>
+          <p className="text-[10px] uppercase tracking-widest text-slate-500">
+            {t('chart.lastPrice')}
+          </p>
           <p
             key={last.tick}
             className={`font-mono text-2xl font-bold ${
@@ -236,7 +240,7 @@ export default function PriceChart({ symbol, interval }: Props) {
       <div ref={containerRef} className="min-h-0 flex-1" />
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-ink/60">
-          <span className="text-sm text-slate-400">loading candles…</span>
+          <span className="text-sm text-slate-400">{t('chart.loading')}</span>
         </div>
       )}
       {error && (

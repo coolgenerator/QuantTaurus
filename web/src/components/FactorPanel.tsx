@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchFactors, fmtNum, type FactorSeries } from '../api'
+import { useI18n } from '../i18n'
 
 interface Props {
   symbol: string
@@ -89,6 +90,7 @@ function Sparkline({ values, color }: { values: (number | null)[]; color: string
 }
 
 export default function FactorPanel({ symbol, interval }: Props) {
+  const { t } = useI18n()
   const [factors, setFactors] = useState<FactorSeries | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -110,9 +112,9 @@ export default function FactorPanel({ symbol, interval }: Props) {
 
   return (
     <section className="glass-card flex h-[440px] flex-col p-4">
-      <h2 className="panel-title mb-3">Alpha Factors</h2>
+      <h2 className="panel-title mb-3">{t('factors.title')}</h2>
       {error && <p className="text-xs text-neon-red">{error}</p>}
-      {!factors && !error && <p className="text-xs text-slate-500">loading factors…</p>}
+      {!factors && !error && <p className="text-xs text-slate-500">{t('factors.loading')}</p>}
       {factors && (
         <div className="grid min-h-0 flex-1 auto-rows-fr grid-cols-1 gap-2 overflow-y-auto pr-1">
           {FACTOR_DEFS.map(({ key, label }) => {

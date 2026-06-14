@@ -17,36 +17,37 @@ import StrategiesPanel from './components/StrategiesPanel'
 import UniversePlanPanel from './components/UniversePlanPanel'
 import FactorLabPanel from './components/FactorLabPanel'
 import TechPanel from './components/TechPanel'
+import { useI18n } from './i18n'
 
 type View = 'stocks' | 'tech' | 'plans' | 'positions' | 'strategies' | 'factorlab' | 'options'
 
-const VIEW_TABS: { key: View; label: string; sub: string }[] = [
-  { key: 'stocks', label: '股票分析', sub: 'Stocks' },
-  { key: 'tech', label: '技术分析', sub: 'TA' },
-  { key: 'plans', label: '交易计划', sub: 'Plans' },
-  { key: 'positions', label: '持仓', sub: 'Positions' },
-  { key: 'strategies', label: '策略', sub: 'Strategies' },
-  { key: 'factorlab', label: '因子 Lab', sub: 'Factor Lab' },
-  { key: 'options', label: '期权分析', sub: 'Options' },
+const VIEW_TABS: { key: View; labelKey: string }[] = [
+  { key: 'stocks', labelKey: 'app.tabs.stocks' },
+  { key: 'tech', labelKey: 'app.tabs.tech' },
+  { key: 'plans', labelKey: 'app.tabs.plans' },
+  { key: 'positions', labelKey: 'app.tabs.positions' },
+  { key: 'strategies', labelKey: 'app.tabs.strategies' },
+  { key: 'factorlab', labelKey: 'app.tabs.factorlab' },
+  { key: 'options', labelKey: 'app.tabs.options' },
 ]
 
 function ViewTabs({ view, onChange }: { view: View; onChange: (v: View) => void }) {
+  const { t } = useI18n()
   return (
     <nav className="glass-card flex items-center gap-1 px-2 py-1.5">
-      {VIEW_TABS.map((t) => {
-        const active = view === t.key
+      {VIEW_TABS.map((tab) => {
+        const active = view === tab.key
         return (
           <button
-            key={t.key}
-            onClick={() => onChange(t.key)}
+            key={tab.key}
+            onClick={() => onChange(tab.key)}
             className={`relative rounded-lg px-4 py-1.5 text-sm font-bold transition ${
               active
                 ? 'text-neon-cyan drop-shadow-[0_0_8px_rgba(34,211,238,0.6)]'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
             }`}
           >
-            {t.label} <span className="text-xs font-medium opacity-70">{t.sub}</span>
-            {/* 霓虹下划线 */}
+            {t(tab.labelKey)}
             <span
               className={`absolute inset-x-3 -bottom-[3px] h-[2px] rounded-full bg-gradient-to-r from-neon-cyan to-neon-purple transition-opacity ${
                 active ? 'opacity-100 shadow-[0_0_10px_rgba(34,211,238,0.8)]' : 'opacity-0'
@@ -77,29 +78,35 @@ function parseHash(): { view: View; planView: PlanView; symbol?: string; interva
   }
 }
 
-const PLAN_TABS: { key: PlanView; label: string; sub: string }[] = [
-  { key: 'champion', label: '🏆 冠军计划', sub: 'Champion' },
-  { key: 'universe', label: '🌐 全池精选', sub: 'Universe' },
-  { key: 'options', label: '🎯 期权计划', sub: 'Options' },
+const PLAN_TABS: { key: PlanView; labelKey: string }[] = [
+  { key: 'champion', labelKey: 'app.planTabs.champion' },
+  { key: 'universe', labelKey: 'app.planTabs.universe' },
+  { key: 'options', labelKey: 'app.planTabs.options' },
 ]
 
-/** 计划页二级胶囊导航：sticky 在顶栏下方，选中霓虹青底发光，未选中灰描边。 */
-function PlanSubNav({ planView, onChange }: { planView: PlanView; onChange: (v: PlanView) => void }) {
+function PlanSubNav({
+  planView,
+  onChange,
+}: {
+  planView: PlanView
+  onChange: (v: PlanView) => void
+}) {
+  const { t } = useI18n()
   return (
     <nav className="sticky top-[76px] z-40 flex items-center gap-2 rounded-full border border-white/10 bg-panel/85 px-2 py-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
-      {PLAN_TABS.map((t) => {
-        const active = planView === t.key
+      {PLAN_TABS.map((tab) => {
+        const active = planView === tab.key
         return (
           <button
-            key={t.key}
-            onClick={() => onChange(t.key)}
+            key={tab.key}
+            onClick={() => onChange(tab.key)}
             className={`rounded-full px-4 py-1.5 text-sm font-bold transition ${
               active
                 ? 'border border-neon-cyan/60 bg-neon-cyan/15 text-neon-cyan shadow-[0_0_14px_rgba(34,211,238,0.45)] drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]'
                 : 'border border-white/10 text-slate-400 hover:border-white/25 hover:bg-white/5 hover:text-slate-200'
             }`}
           >
-            {t.label} <span className="text-xs font-medium opacity-70">{t.sub}</span>
+            {t(tab.labelKey)}
           </button>
         )
       })}
@@ -108,6 +115,7 @@ function PlanSubNav({ planView, onChange }: { planView: PlanView; onChange: (v: 
 }
 
 export default function App() {
+  const { t } = useI18n()
   const [symbol, setSymbol] = useState(() => parseHash().symbol ?? 'BTCUSDT')
   const [interval, setInterval] = useState(() => parseHash().interval ?? '1h')
   const [view, setView] = useState<View>(() => parseHash().view)
@@ -268,7 +276,7 @@ export default function App() {
       )}
 
       <footer className="pb-2 text-center text-xs text-slate-600">
-        QuantTaurus · for research only · not financial advice
+        {t('app.footer')}
       </footer>
     </div>
   )

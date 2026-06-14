@@ -16,6 +16,7 @@ import {
   type SpecKind,
   type StrategySpec,
 } from '../api'
+import { useI18n } from '../i18n'
 
 interface Props {
   symbol: string
@@ -77,21 +78,21 @@ const SPEC_FORMS: Record<FormSpecKind, { label: string; fields: FieldDef[]; defa
 
 type CostPresetKey = 'auto' | 'moomoo_us' | 'crypto_taker' | 'small_scalp' | 'custom'
 
-const COST_PRESETS: Record<CostPresetKey, { label: string; cost: CostModel | null }> = {
-  auto: { label: '自动（按资产类别）', cost: null },
+const COST_PRESETS: Record<CostPresetKey, { labelKey: string; cost: CostModel | null }> = {
+  auto: { labelKey: 'cost.auto', cost: null },
   moomoo_us: {
-    label: 'moomoo 美股',
+    labelKey: 'cost.moomoo_us',
     cost: { fee_rate: 0.00002, slippage: 0.0003, min_fee_usd: 0, capital_usd: 10000 },
   },
   crypto_taker: {
-    label: '加密 taker',
+    labelKey: 'cost.crypto_taker',
     cost: { fee_rate: 0.001, slippage: 0.0005, min_fee_usd: 0, capital_usd: 10000 },
   },
   small_scalp: {
-    label: '短线小资金',
+    labelKey: 'cost.small_scalp',
     cost: { fee_rate: 0.00002, slippage: 0.0005, min_fee_usd: 1, capital_usd: 5000 },
   },
-  custom: { label: '自定义', cost: null },
+  custom: { labelKey: 'cost.custom', cost: null },
 }
 
 const COST_FIELDS: { name: keyof CostModel; label: string; step: number }[] = [
@@ -101,12 +102,19 @@ const COST_FIELDS: { name: keyof CostModel; label: string; step: number }[] = [
   { name: 'capital_usd', label: 'Capital $', step: 1000 },
 ]
 
-/** 指标网格旁的成本假设说明文字。 */
-function costNote(preset: CostPresetKey, cost: CostModel | undefined): string {
-  if (preset === 'auto' || !cost) return '成本假设: 自动（按资产类别默认）'
-  return `成本假设: ${COST_PRESETS[preset].label} · fee ${(cost.fee_rate * 100).toFixed(4)}% · slip ${(
-    cost.slippage * 100
-  ).toFixed(3)}% · min $${cost.min_fee_usd} · 本金 $${cost.capital_usd.toLocaleString('en-US')}`
+function costNote(
+  t: (key: string, vars?: Record<string, string | number>) => string,
+  preset: CostPresetKey,
+  cost: CostModel | undefined,
+): string {
+  if (preset === 'auto' || !cost) return t('backtest.autoCostNote')
+  return t('backtest.costNote', {
+    label: t(COST_PRESETS[preset].labelKey),
+    fee: (cost.fee_rate * 100).toFixed(4),
+    slip: (cost.slippage * 100).toFixed(3),
+    min: cost.min_fee_usd,
+    capital: cost.capital_usd.toLocaleString('en-US'),
+  })
 }
 
 function Metric({
@@ -134,9 +142,11 @@ const signTone = (v: number): 'pos' | 'neg' => (v >= 0 ? 'pos' : 'neg')
 const defaultDays = (iv: string) =>
   iv === '1w' || iv === '1mo' ? 7300 : iv === '1d' ? 1460 : iv === '1m' ? 7 : iv === '5m' || iv === '30m' ? 59 : 365
 const DAYS_CHOICES = [365, 730, 1460, 3650, 7300] as const
-const daysLabel = (d: number) => (d >= 365 ? `${Math.round(d / 365)}年` : `${d}天`)
+const daysLabel = (t: (key: string, vars?: Record<string, string | number>) => string, d: number) =>
+  d >= 365 ? t('time.years', { n: Math.round(d / 365) }) : t('time.days', { n: d })
 
 export default function BacktestPanel({ symbol, interval }: Props) {
+  const { t } = useI18n()
   const [kind, setKind] = useState<FormSpecKind>('tsmom')
   const [params, setParams] = useState<Record<string, number>>(SPEC_FORMS.tsmom.defaults)
   const [result, setResult] = useState<BacktestResult | null>(null)
@@ -249,15 +259,17 @@ export default function BacktestPanel({ symbol, interval }: Props) {
   return (
     <section className="glass-card flex flex-col p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <h2 className="panel-title">Backtest Lab</h2>
+        <h2 className="panel-title">{t('backtest.title')}</h2>
         <span className="ml-auto font-mono text-xs text-slate-500">
-          {symbol} · {interval} · {daysLabel(days)}
+          {symbol} · {interval} · {daysLabel(t, days)}
         </span>
       </div>
 
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">Strategy</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">
+            {t('backtest.strategy')}
+          </span>
           <select
             className="select-dark"
             value={kind}
@@ -287,23 +299,25 @@ export default function BacktestPanel({ symbol, interval }: Props) {
         ))}
 
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">回看窗口</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">
+            {t('backtest.window')}
+          </span>
           <select className="select-dark font-mono" value={days} onChange={(e) => setDays(Number(e.target.value))}>
             {DAYS_CHOICES.map((d) => (
               <option key={d} value={d}>
-                {daysLabel(d)}
+                {daysLabel(t, d)}
               </option>
             ))}
           </select>
         </label>
 
         <button className="btn-neon" onClick={run} disabled={running}>
-          {running ? `回测中 ${elapsed}s…` : '运行回测'}
+          {running ? t('backtest.running', { seconds: elapsed }) : t('backtest.run')}
         </button>
         {running && (
           <span className="flex items-center gap-2 self-center text-xs text-slate-400">
             <span className="h-2 w-2 animate-pulse rounded-full bg-neon-cyan" />
-            拉取{daysLabel(days)}K线并仿真（首次下载历史数据可能 10~30 秒）…
+            {t('backtest.loading', { days: daysLabel(t, days) })}
           </span>
         )}
       </div>
@@ -315,16 +329,18 @@ export default function BacktestPanel({ symbol, interval }: Props) {
           onClick={() => setCostOpen((o) => !o)}
         >
           <span className="font-mono text-[10px]">{costOpen ? '▼' : '▶'}</span>
-          成本模型
+          {t('backtest.costModel')}
           <span className="ml-auto font-mono text-[10px] font-normal text-slate-500">
-            {COST_PRESETS[costPreset].label}
+            {t(COST_PRESETS[costPreset].labelKey)}
           </span>
         </button>
 
         {costOpen && (
           <div className="flex flex-wrap items-end gap-3 border-t border-white/5 px-3 py-3">
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] uppercase tracking-wider text-slate-500">预设</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                {t('backtest.preset')}
+              </span>
               <select
                 className="select-dark"
                 value={costPreset}
@@ -332,7 +348,7 @@ export default function BacktestPanel({ symbol, interval }: Props) {
               >
                 {(Object.keys(COST_PRESETS) as CostPresetKey[]).map((k) => (
                   <option key={k} value={k}>
-                    {COST_PRESETS[k].label}
+                    {t(COST_PRESETS[k].labelKey)}
                   </option>
                 ))}
               </select>
@@ -360,10 +376,13 @@ export default function BacktestPanel({ symbol, interval }: Props) {
             {costPreset !== 'custom' && (
               <p className="self-center font-mono text-[11px] text-slate-500">
                 {effectiveCost
-                  ? `fee ${(effectiveCost.fee_rate * 100).toFixed(4)}% · slip ${(
-                      effectiveCost.slippage * 100
-                    ).toFixed(3)}% · min $${effectiveCost.min_fee_usd} · 本金 $${effectiveCost.capital_usd.toLocaleString('en-US')}`
-                  : '不传 cost，由后端按资产类别选择默认成本。'}
+                  ? t('backtest.costSummary', {
+                      fee: (effectiveCost.fee_rate * 100).toFixed(4),
+                      slip: (effectiveCost.slippage * 100).toFixed(3),
+                      min: effectiveCost.min_fee_usd,
+                      capital: effectiveCost.capital_usd.toLocaleString('en-US'),
+                    })
+                  : t('backtest.backendDefaultCost')}
               </p>
             )}
           </div>
@@ -380,7 +399,7 @@ export default function BacktestPanel({ symbol, interval }: Props) {
         <>
           {usedCost && (
             <p className="mb-2 font-mono text-[10px] text-slate-500">
-              {costNote(usedCost.preset, usedCost.cost)}
+              {costNote(t, usedCost.preset, usedCost.cost)}
             </p>
           )}
           <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -411,7 +430,7 @@ export default function BacktestPanel({ symbol, interval }: Props) {
 
       {!result && !error && (
         <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-white/10 text-sm text-slate-500">
-          Configure a strategy and hit 运行回测 to see the equity curve.
+          {t('backtest.empty')}
         </div>
       )}
     </section>
