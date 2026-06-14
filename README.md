@@ -1,119 +1,123 @@
-# QuantTaurus — 全栈量化研究与模拟交易平台
+# QuantTaurus - Quant Research and Paper-Trading Platform
 
-QuantTaurus 是一个本地运行的量化研究平台：Rust 核心引擎负责数据缓存、因子计算、回测、策略进化和模拟盘；React 前端负责实时图表、因子面板、回测面板、冠军注册表、交易计划和持仓视图。
+[Chinese](README.zh-CN.md)
 
-> 仅供研究和模拟交易使用，不是投资建议，也不是完整实盘风控系统。
+QuantTaurus is a local-first quant research platform. The Rust engine handles market data caching, factor calculation, backtesting, strategy evolution, and paper trading. The React dashboard provides charts, factor research panels, backtest results, champion strategy tracking, trade plans, and portfolio views.
 
-## 架构
+> Research and paper trading only. This project is not investment advice and is not a complete production trading risk system.
+
+## Architecture
 
 ```text
-web/                       React + TS + Vite + Tailwind
-  实时K线 · 技术分析 · 因子实验 · 回测 · 进化任务 · 模拟盘
-      │ REST + WebSocket
+web/                       React + TypeScript + Vite + Tailwind
+  Charts, technical analysis, factor lab, backtests, evolution jobs, paper trading
+      | REST + WebSocket
 engine/                    Rust workspace
-  crates/core              共享类型：Kline、Signal、MarketEvent、指标
-  crates/data              Binance/Yahoo 数据客户端 + 本地缓存
-  crates/factors           动量、反转、波动率、技术规则、横截面因子
-  crates/backtest          事件驱动回测：成本、滑点、净值曲线
-  crates/strategy          策略定义和参数空间
-  crates/evolve            walk-forward 验证、进化搜索、冠军挑战者
-  crates/mine              表达式因子挖掘
-  crates/server            axum API、WS 推送、自动扫描、模拟盘
-bridge/                    moomoo/OpenD Python sidecar
+  crates/core              Shared types: Kline, Signal, MarketEvent, metrics
+  crates/data              Binance/Yahoo data clients and local cache
+  crates/factors           Momentum, reversal, volatility, TA rules, cross-sectional factors
+  crates/backtest          Event-driven backtesting with fees, slippage, and equity curves
+  crates/strategy          Strategy definitions and parameter spaces
+  crates/evolve            Walk-forward validation, evolutionary search, champion/challenger flow
+  crates/mine              Expression-based factor mining
+  crates/server            axum API, WebSocket streaming, auto sweeps, paper engine
+bridge/                    Python sidecars for moomoo/OpenD integration
 ```
 
-本地状态默认写入 `engine/data/`，包括 K 线缓存、冠军注册表、模拟盘状态和风控标记。该目录已在 `.gitignore` 中排除。
+Local runtime state is stored in `engine/data/` by default. This includes kline caches, champion registries, paper-trading state, and risk-halt markers. The directory is excluded from Git.
 
-## 支持的数据
+## Supported Data
 
-| 资产/功能 | 数据源 | 说明 |
+| Asset / feature | Source | Notes |
 |---|---|---|
-| 加密货币 K 线 | Binance public market data mirror | 使用 `data-api.binance.vision` 和 `data-stream.binance.vision`，无需 API key |
-| 加密货币实时流 | Binance WebSocket | 默认启动 BTCUSDT、ETHUSDT、SOLUSDT 实时流 |
-| 美股/ETF/指数 K 线 | Yahoo Finance chart API | 支持如 SPY、QQQ、AAPL、^GSPC；无需 API key，但会限流 |
-| 股票搜索 | Yahoo Finance search API | 前端 SymbolPicker 使用 |
-| 期权链/希腊字母/账户持仓 | moomoo OpenD | 需要本机安装并登录 OpenD，Python sidecar 监听 `127.0.0.1:8788` |
+| Crypto klines | Binance public market data mirror | Uses `data-api.binance.vision` and `data-stream.binance.vision`; no API key required |
+| Crypto live stream | Binance WebSocket | Starts BTCUSDT, ETHUSDT, and SOLUSDT by default |
+| US stocks, ETFs, indexes | Yahoo Finance chart API | Supports symbols such as SPY, QQQ, AAPL, and ^GSPC; no API key required, but rate-limited |
+| Symbol search | Yahoo Finance search API | Used by the frontend symbol picker |
+| Options chain, Greeks, account positions | moomoo OpenD | Requires a local logged-in OpenD instance; the Python sidecar listens on `127.0.0.1:8788` |
 
-周期支持来自 `qcore::Interval`：`1m`、`5m`、`15m`、`30m`、`1h`、`2h`、`4h`、`1d`、`1w`、`1M`。限制：
+Intervals are defined by `qcore::Interval`: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`, `1w`, and `1M`.
 
-- Yahoo 股票数据不支持 `2h`/`4h`，前端会回退到 `1h` 或 `1d`。
-- Yahoo 盘中历史深度有限：`1m` 约 7 天，`5m`/`15m`/`30m` 约 60 天，`1h` 约 2 年。
-- 股票没有 taker buy volume，订单流不平衡类因子会退化。
-- moomoo/OpenD 只用于本地模拟账户和期权快照接入；项目默认不自动下真实订单。
+Known limits:
 
-## 快速开始
+- Yahoo Finance does not support `2h` or `4h` for stocks. The frontend falls back to `1h` or `1d`.
+- Yahoo intraday history is limited: `1m` is about 7 days, `5m`/`15m`/`30m` about 60 days, and `1h` about 2 years.
+- Stocks do not include taker-buy volume, so order-flow imbalance factors degrade to a neutral proxy.
+- moomoo/OpenD integration is for local simulated-account views and options snapshots. The project does not place real orders by default.
 
-依赖：
+## Quick Start
+
+Requirements:
 
 - Rust stable toolchain
 - Node.js 18+
-- Python 3.10+（仅 moomoo bridge/期权 sidecar 需要）
+- Python 3.10+ only for the moomoo bridge and options sidecar
 
 ```bash
-# 后端 API，监听 :8787
+# Backend API on :8787
 cd engine
 cargo run --release -p server
 
-# 前端，监听 :5173；若端口被占用，Vite 会自动换端口
+# Frontend on :5173; Vite will pick another port if needed
 cd ../web
 npm install
 npm run dev
 ```
 
-打开 Vite 输出的本地地址。前端会把 `/api` 和 `/ws` 代理到 `http://localhost:8787`。
+Open the local URL printed by Vite. The dev server proxies `/api` and `/ws` to `http://localhost:8787`.
 
-## 配置
+## Configuration
 
-新配置前缀统一为 `QT_*`。为兼容旧本地部署，代码仍会在未设置 `QT_*` 时回退读取同名 `QHH_*` 变量。建议新部署只使用 `QT_*`。
+New configuration variables use the `QT_*` prefix. For compatibility with older local deployments, the code still falls back to matching `QHH_*` variables when `QT_*` is unset. New deployments should use `QT_*`.
 
-常用变量：
+Common variables:
 
-| 变量 | 默认值 | 用途 |
+| Variable | Default | Purpose |
 |---|---:|---|
-| `QT_DATA_DIR` | `data` | 后端数据目录，相对 `engine/` 工作目录 |
-| `QT_AUTOSWEEP_HOURS` | `24` | 全宇宙自动进化扫描周期；`0` 关闭 |
-| `QT_AUTORETRAIN_HOURS` | `6` | 单标的自动再训练周期；`0` 关闭 |
-| `QT_AUTORETRAIN_SYMBOL` | `BTCUSDT` | 自动再训练标的 |
-| `QT_AUTORETRAIN_INTERVAL` | `4h` | 自动再训练周期 |
-| `QT_AUTORETRAIN_DAYS` | `730` | 自动再训练历史窗口 |
-| `QT_MAX_DD` | `0.15` | 组合模拟盘最大回撤熔断 |
-| `QT_INTRADAY_MINUTES` | `30` | 盘中再决策周期；`0` 关闭 |
-| `QT_STOCK_LONG_ONLY` | `1` | 股票策略是否禁止做空 |
-| `QT_GROSS_CAP` | `1.0` | 组合总杠杆上限 |
-| `QT_VOL_TARGET` | `0.15` | 组合目标年化波动率 |
-| `QT_STOCK_FEE` | `0.00002` | 股票单边费率假设 |
-| `QT_STOCK_SLIPPAGE` | `0.0003` | 股票滑点假设 |
-| `QT_API` | `http://localhost:8787` | Python bridge 访问 Rust API 的地址 |
+| `QT_DATA_DIR` | `data` | Backend data directory, relative to the `engine/` working directory |
+| `QT_AUTOSWEEP_HOURS` | `24` | Full-universe evolution sweep interval; `0` disables it |
+| `QT_AUTORETRAIN_HOURS` | `6` | Single-symbol auto-retrain interval; `0` disables it |
+| `QT_AUTORETRAIN_SYMBOL` | `BTCUSDT` | Auto-retrain symbol |
+| `QT_AUTORETRAIN_INTERVAL` | `4h` | Auto-retrain interval |
+| `QT_AUTORETRAIN_DAYS` | `730` | Auto-retrain history window |
+| `QT_MAX_DD` | `0.15` | Portfolio paper-trading max drawdown kill switch |
+| `QT_INTRADAY_MINUTES` | `30` | Intraday decision interval; `0` disables it |
+| `QT_STOCK_LONG_ONLY` | `1` | Whether stock strategies are long-only |
+| `QT_GROSS_CAP` | `1.0` | Portfolio gross leverage cap |
+| `QT_VOL_TARGET` | `0.15` | Portfolio target annualized volatility |
+| `QT_STOCK_FEE` | `0.00002` | Stock one-way fee assumption |
+| `QT_STOCK_SLIPPAGE` | `0.0003` | Stock slippage assumption |
+| `QT_API` | `http://localhost:8787` | Rust API address used by Python sidecars |
 
-示例配置见 [.env.example](.env.example)。
+See [.env.example](.env.example) for a sample configuration.
 
-## moomoo/OpenD Sidecar
+## moomoo / OpenD Sidecars
 
-期权分析和 moomoo 模拟账户面板需要本机 OpenD：
+Options analysis and the moomoo simulated-account panel require a local OpenD instance:
 
 ```bash
 pip install futu-api requests
 
-# 期权链、期权模拟盘、moomoo 账户面板
+# Options chain, options paper account, and moomoo account panel
 python3 bridge/options_service.py
 
-# 可选：把 QuantTaurus 的股票目标仓位同步到 moomoo 模拟账户
+# Optional: sync QuantTaurus stock target positions to a moomoo simulated account
 python3 bridge/moomoo_bridge.py --dry-run --once
 python3 bridge/moomoo_bridge.py
 ```
 
-OpenD 默认监听 `127.0.0.1:11111`。前端 dev server 已配置 `/opt-api` 代理到 `127.0.0.1:8788`。
+OpenD listens on `127.0.0.1:11111` by default. The frontend dev server proxies `/opt-api` to `127.0.0.1:8788`.
 
-## macOS 部署
+## macOS Deployment
 
-后端可先编译 release 二进制：
+Build the backend release binary:
 
 ```bash
 cd engine
 cargo build --release -p server
 ```
 
-从仓库根目录安装 launchd 服务，用当前仓库路径替换 plist 占位符：
+From the repository root, install the launchd service by replacing the plist placeholder with the current repository path:
 
 ```bash
 ROOT="$(pwd)"
@@ -122,17 +126,17 @@ sed "s#__QUANTTAURUS_ROOT__#$ROOT#g" deploy/com.quanttaurus.server.plist \
 launchctl load ~/Library/LaunchAgents/com.quanttaurus.server.plist
 ```
 
-日志默认写到 `/tmp/qt-server.log`。如果要部署 collector，同样处理 `deploy/com.quanttaurus.collector.plist`。
+Logs go to `/tmp/qt-server.log` by default. Use the same placeholder replacement flow for `deploy/com.quanttaurus.collector.plist` if you want to deploy the collector.
 
-## 策略自迭代机制
+## Strategy Evolution
 
-1. 散布折验证：验证折均匀散布在留出窗之前的历史中，候选必须跨牛/熊/震荡都稳定。
-2. 进化搜索：对多个策略家族的参数空间做 `(mu+lambda)` 搜索。
-3. Ensemble 挑战者：top-k 跨家族候选等权组合，与单点最优竞争。
-4. 冠军-挑战者晋升：挑战者必须在未参与搜索的留出窗上超过现任冠军，并且留出 Sharpe 必须为正。
-5. 自动再训练/扫描：通过 `QT_AUTORETRAIN_*` 和 `QT_AUTOSWEEP_HOURS` 控制。
+1. Scattered-fold validation: validation folds are spread across the pre-holdout history so candidates must survive multiple regimes.
+2. Evolutionary search: strategy families are searched with a `(mu+lambda)` process.
+3. Ensemble challengers: top candidates across families are combined and compared with the best single candidate.
+4. Champion/challenger promotion: a challenger must beat the current champion on an untouched holdout window, and holdout Sharpe must be positive.
+5. Auto retraining and sweeps: controlled by `QT_AUTORETRAIN_*` and `QT_AUTOSWEEP_HOURS`.
 
-## 研究参考
+## References
 
 - Moskowitz, Ooi & Pedersen (2012), *Time Series Momentum*
 - Moreira & Muir (2017), *Volatility-Managed Portfolios*
